@@ -1,0 +1,200 @@
+import { createClient } from '@supabase/supabase-js'
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+// Type definitions
+export interface Database {
+  public: {
+    Tables: {
+      profiles: {
+        Row: {
+          id: string
+          email: string
+          full_name: string | null
+          avatar_url: string | null
+          phone: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          email: string
+          full_name?: string | null
+          avatar_url?: string | null
+          phone?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          email?: string
+          full_name?: string | null
+          avatar_url?: string | null
+          phone?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      groups: {
+        Row: {
+          id: string
+          name: string
+          description: string | null
+          created_by: string
+          category: string
+          image_url: string | null
+          currency: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          description?: string | null
+          created_by: string
+          category?: string
+          image_url?: string | null
+          currency?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          description?: string | null
+          created_by?: string
+          category?: string
+          image_url?: string | null
+          currency?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      group_members: {
+        Row: {
+          id: string
+          group_id: string
+          user_id: string
+          role: string
+          joined_at: string
+        }
+        Insert: {
+          id?: string
+          group_id: string
+          user_id: string
+          role?: string
+          joined_at?: string
+        }
+        Update: {
+          id?: string
+          group_id?: string
+          user_id?: string
+          role?: string
+          joined_at?: string
+        }
+      }
+      expenses: {
+        Row: {
+          id: string
+          group_id: string
+          payer_id: string
+          description: string
+          amount: number
+          category: string
+          notes: string | null
+          receipt_url: string | null
+          expense_date: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          group_id: string
+          payer_id: string
+          description: string
+          amount: number
+          category?: string
+          notes?: string | null
+          receipt_url?: string | null
+          expense_date?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          group_id?: string
+          payer_id?: string
+          description?: string
+          amount?: number
+          category?: string
+          notes?: string | null
+          receipt_url?: string | null
+          expense_date?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      expense_splits: {
+        Row: {
+          id: string
+          expense_id: string
+          user_id: string
+          amount: number
+          is_settled: boolean
+          settled_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          expense_id: string
+          user_id: string
+          amount: number
+          is_settled?: boolean
+          settled_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          expense_id?: string
+          user_id?: string
+          amount?: number
+          is_settled?: boolean
+          settled_at?: string | null
+          created_at?: string
+        }
+      }
+      settlements: {
+        Row: {
+          id: string
+          group_id: string
+          payer_id: string
+          receiver_id: string
+          amount: number
+          description: string | null
+          settled_at: string
+        }
+        Insert: {
+          id?: string
+          group_id: string
+          payer_id: string
+          receiver_id: string
+          amount: number
+          description?: string | null
+          settled_at?: string
+        }
+        Update: {
+          id?: string
+          group_id?: string
+          payer_id?: string
+          receiver_id?: string
+          amount?: number
+          description?: string | null
+          settled_at?: string
+        }
+      }
+    }
+  }
+}
