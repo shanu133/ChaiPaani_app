@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -28,7 +28,9 @@ import {
   Clock,
   Menu,
   X,
+  Loader2,
 } from "lucide-react";
+import { groupService, expenseService, authService } from "../lib/supabase-service";
 
 interface DashboardProps {
   onLogout: () => void;
@@ -53,55 +55,56 @@ export function Dashboard({
   const [isSettleUpModalOpen, setIsSettleUpModalOpen] = useState(false);
   const [isScanReceiptModalOpen, setIsScanReceiptModalOpen] = useState(false);
 
-  // Mock data for the add expense modal
-  const mockGroupMembers = [
-    { id: "1", name: "You", avatar: "YU" },
-    { id: "2", name: "Arjun", avatar: "AR" },
-    { id: "3", name: "Priya", avatar: "PR" },
-    { id: "4", name: "Rahul", avatar: "RA" },
-  ];
+  // Real data state
+  const [groups, setGroups] = useState<any[]>([]);
+  const [recentExpenses, setRecentExpenses] = useState<any[]>([]);
+  const [userBalance, setUserBalance] = useState({ owed: 0, owes: 0, net: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
-  const currentUser = mockGroupMembers[0];
+  // Data fetching functions
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
 
-  const recentExpenses = [
-    {
-      id: 1,
-      description: "Lunch at Udupi Palace",
-      amount: 450,
-      paidBy: "You",
-      group: "Office Squad",
-      date: "Today",
-      yourShare: 150,
-      type: "owed" as const,
-    },
-    {
-      id: 2,
-      description: "Movie Tickets",
-      amount: 800,
-      paidBy: "Arjun",
-      group: "Weekend Gang",
-      date: "Yesterday",
-      yourShare: 200,
-      type: "owes" as const,
-    },
-    {
-      id: 3,
-      description: "Grocery Shopping",
-      amount: 1200,
-      paidBy: "Priya",
-      group: "Roommates",
-      date: "2 days ago",
-      yourShare: 400,
-      type: "owes" as const,
-    },
-  ];
+      // Get current user
+      const user = await authService.getCurrentUser();
+      setCurrentUser(user);
 
-  const groups = [
-    { id: 1, name: "Office Squad", members: 4, balance: 250 },
-    { id: 2, name: "Weekend Gang", members: 6, balance: -180 },
-    { id: 3, name: "Roommates", members: 3, balance: 75 },
-    { id: 4, name: "Goa Trip 2024", members: 8, balance: 420 },
-  ];
+      // Fetch user groups
+      const { data: groupsData, error: groupsError } = await groupService.getUserGroups();
+      if (groupsError) throw groupsError;
+      setGroups(groupsData || []);
+
+      // Fetch recent expenses
+      const { data: expensesData, error: expensesError } = await expenseService.getRecentExpenses(10);
+      if (expensesError) throw expensesError;
+      setRecentExpenses(expensesData || []);
+
+      // Fetch user balance
+      const { data: balanceData, error: balanceError } = await expenseService.getUserBalance();
+      if (balanceError) throw balanceError;
+
+      // Calculate balance summary
+      if (balanceData) {
+        const owed = balanceData.filter((item: any) => item.amount > 0).reduce((sum: number, item: any) => sum + item.amount, 0);
+        const owes = Math.abs(balanceData.filter((item: any) => item.amount < 0).reduce((sum: number, item: any) => sum + item.amount, 0));
+        setUserBalance({ owed, owes, net: owed - owes });
+      }
+
+    } catch (err: any) {
+      console.error("Error fetching dashboard data:", err);
+      setError(err.message || "Failed to load dashboard data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
@@ -199,12 +202,19 @@ export function Dashboard({
           <div className="p-4 border-t">
             <div className="flex items-center gap-3 mb-3">
               <Avatar>
-                <AvatarFallback>YU</AvatarFallback>
+                <AvatarFallback>
+                  {currentUser?.user_metadata?.full_name
+                    ? currentUser.user_metadata.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase()
+                    : 'U'
+                  }
+                </AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">
-                <p className="font-medium truncate">You</p>
+                <p className="font-medium truncate">
+                  {currentUser?.user_metadata?.full_name || 'User'}
+                </p>
                 <p className="text-sm text-muted-foreground truncate">
-                  demo@chaipaani.com
+                  {currentUser?.email || 'user@example.com'}
                 </p>
               </div>
             </div>
@@ -261,8 +271,37 @@ export function Dashboard({
 
         {/* Content */}
         <main className="p-4 md:p-6 space-y-6 md:space-y-8">
-          {/* Summary Cards */}
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+          {/* Loading State */}
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <div className="text-center">
+                <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
+                <p className="text-muted-foreground">Loading your dashboard...</p>
+              </div>
+            </div>
+          )}
+
+          {/* Error State */}
+          {error && !loading && (
+            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
+              <p className="text-destructive font-medium">Error loading dashboard</p>
+              <p className="text-destructive/80 text-sm mt-1">{error}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={fetchDashboardData}
+              >
+                Try Again
+              </Button>
+            </div>
+          )}
+
+          {/* Main Content - Only show when not loading and no error */}
+          {!loading && !error && (
+            <>
+              {/* Summary Cards */}
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">
@@ -272,10 +311,10 @@ export function Dashboard({
               </CardHeader>
               <CardContent>
                 <div className="text-xl md:text-2xl font-bold text-primary">
-                  +₹545
+                  {userBalance.net >= 0 ? "+" : ""}₹{Math.abs(userBalance.net)}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  You are owed overall
+                  {userBalance.net >= 0 ? "You are owed overall" : "You owe overall"}
                 </p>
               </CardContent>
             </Card>
@@ -289,10 +328,10 @@ export function Dashboard({
               </CardHeader>
               <CardContent>
                 <div className="text-xl md:text-2xl font-bold text-destructive">
-                  ₹380
+                  ₹{userBalance.owes}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Across 2 groups
+                  Across {groups.length} groups
                 </p>
               </CardContent>
             </Card>
@@ -306,10 +345,10 @@ export function Dashboard({
               </CardHeader>
               <CardContent>
                 <div className="text-xl md:text-2xl font-bold text-primary">
-                  ₹925
+                  ₹{userBalance.owed}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  From 3 people
+                  From group members
                 </p>
               </CardContent>
             </Card>
@@ -332,47 +371,59 @@ export function Dashboard({
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 md:space-y-4">
-                {recentExpenses.map((expense) => (
-                  <div
-                    key={expense.id}
-                    className="flex items-center justify-between p-3 rounded-lg border"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <Receipt className="w-4 h-4 md:w-5 md:h-5 text-primary" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-sm md:text-base truncate">
-                          {expense.description}
-                        </p>
-                        <div className="flex items-center gap-1 md:gap-2 text-xs md:text-sm text-muted-foreground">
-                          <span>Paid by {expense.paidBy}</span>
-                          <span>•</span>
-                          <span className="truncate">
-                            {expense.group}
-                          </span>
-                          <span className="hidden sm:inline">
-                            •
-                          </span>
-                          <span className="hidden sm:inline">
-                            {expense.date}
-                          </span>
+                {recentExpenses.length > 0 ? recentExpenses.map((expense: any) => {
+                  const isCurrentUserPayer = expense.payer?.id === currentUser?.id;
+                  const userSplit = expense.expense_splits?.find((split: any) => split.user_id === currentUser?.id);
+                  const yourShare = userSplit?.amount || 0;
+                  const expenseType = isCurrentUserPayer ? "owed" : (yourShare > 0 ? "owes" : "owed");
+
+                  return (
+                    <div
+                      key={expense.id}
+                      className="flex items-center justify-between p-3 rounded-lg border"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                          <Receipt className="w-4 h-4 md:w-5 md:h-5 text-primary" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm md:text-base truncate">
+                            {expense.description}
+                          </p>
+                          <div className="flex items-center gap-1 md:gap-2 text-xs md:text-sm text-muted-foreground">
+                            <span>Paid by {expense.payer?.full_name || "Someone"}</span>
+                            <span>•</span>
+                            <span className="truncate">
+                              {expense.group?.name || "Group"}
+                            </span>
+                            <span className="hidden sm:inline">
+                              •
+                            </span>
+                            <span className="hidden sm:inline">
+                              {new Date(expense.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
                         </div>
                       </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="font-medium text-sm md:text-base">
+                          ₹{expense.amount}
+                        </p>
+                        <p
+                          className={`text-xs md:text-sm ${expenseType === "owed" ? "text-primary" : "text-destructive"}`}
+                        >
+                          {expenseType === "owed" ? "+" : "-"}₹{yourShare}
+                        </p>
+                      </div>
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="font-medium text-sm md:text-base">
-                        ₹{expense.amount}
-                      </p>
-                      <p
-                        className={`text-xs md:text-sm ${expense.type === "owed" ? "text-primary" : "text-destructive"}`}
-                      >
-                        {expense.type === "owed" ? "+" : "-"}₹
-                        {expense.yourShare}
-                      </p>
-                    </div>
+                  );
+                }) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Receipt className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p>No expenses yet</p>
+                    <p className="text-sm">Create your first expense to get started!</p>
                   </div>
-                ))}
+                )}
               </CardContent>
             </Card>
 
@@ -388,10 +439,11 @@ export function Dashboard({
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {groups.map((group) => (
+                {groups.length > 0 ? groups.map((group: any) => (
                   <div
                     key={group.id}
                     className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors cursor-pointer"
+                    onClick={onGoToGroups}
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center">
@@ -402,26 +454,23 @@ export function Dashboard({
                           {group.name}
                         </p>
                         <p className="text-sm text-muted-foreground">
-                          {group.members} members
+                          {group.group_members?.length || 0} members
                         </p>
                       </div>
                     </div>
                     <div className="text-right">
-                      {group.balance === 0 ? (
-                        <Badge variant="secondary">
-                          Settled
-                        </Badge>
-                      ) : (
-                        <p
-                          className={`font-medium ${group.balance > 0 ? "text-primary" : "text-destructive"}`}
-                        >
-                          {group.balance > 0 ? "+" : ""}₹
-                          {group.balance}
-                        </p>
-                      )}
+                      <Badge variant="secondary">
+                        Active
+                      </Badge>
                     </div>
                   </div>
-                ))}
+                )) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p>No groups yet</p>
+                    <p className="text-sm">Create your first group to get started!</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -470,6 +519,8 @@ export function Dashboard({
               </div>
             </CardContent>
           </Card>
+          </>
+        )}
         </main>
       </div>
 
@@ -477,8 +528,21 @@ export function Dashboard({
       <AddExpenseModal
         isOpen={isAddExpenseModalOpen}
         onClose={() => setIsAddExpenseModalOpen(false)}
-        groupMembers={mockGroupMembers}
-        currentUser={currentUser}
+        groupMembers={groups.length > 0 ? groups.slice(0, 4).map((group, index) => ({
+          id: group.id,
+          name: group.name,
+          avatar: group.name.substring(0, 2).toUpperCase()
+        })) : []}
+        currentUser={currentUser ? {
+          id: currentUser.id,
+          name: currentUser.user_metadata?.full_name || "You",
+          avatar: (currentUser.user_metadata?.full_name || "You").substring(0, 2).toUpperCase()
+        } : { id: "temp", name: "You", avatar: "YO" }}
+        groupId={groups.length > 0 ? groups[0].id : "demo-group"}
+        onExpenseCreated={() => {
+          console.log("Expense created successfully");
+          fetchDashboardData(); // Refresh dashboard data
+        }}
       />
 
       <CreateGroupModal

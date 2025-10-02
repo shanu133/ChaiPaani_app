@@ -76,7 +76,9 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
           setError(error.message);
         } else {
           console.log("Google sign in initiated:", data);
-          // The redirect will happen automatically
+          // The redirect will happen automatically to /auth/callback
+          // But since we're using view-based routing, we need to handle this differently
+          // The auth callback will be handled by Supabase's redirect
         }
       } catch (err) {
         setError("Failed to initiate Google sign in");

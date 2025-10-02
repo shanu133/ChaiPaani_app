@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { LandingPage } from "./components/landing-page";
 import { AuthPage } from "./components/auth-page";
+import { AuthCallback } from "./components/auth-callback";
 import { Dashboard } from "./components/dashboard";
 import { GroupsPage } from "./components/groups-page";
 import { NotificationsPage } from "./components/notifications-page";
@@ -8,7 +9,7 @@ import { ActivityPage } from "./components/activity-page";
 import { SettingsPage } from "./components/settings-page";
 import { authService } from "./lib/supabase-service";
 
-type AppView = "landing" | "auth" | "dashboard" | "groups" | "notifications" | "activity" | "settings";
+type AppView = "landing" | "auth" | "auth-callback" | "dashboard" | "groups" | "notifications" | "activity" | "settings";
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>("landing");
@@ -118,10 +119,18 @@ export default function App() {
   switch (currentView) {
     case "auth":
       return (
-        <AuthPage 
+        <AuthPage
           onLogin={handleLogin}
           onBack={handleBackToLanding}
           onLogoClick={handleLogoClick}
+        />
+      );
+
+    case "auth-callback":
+      return (
+        <AuthCallback
+          onAuthSuccess={() => setCurrentView("dashboard")}
+          onAuthError={() => setCurrentView("auth")}
         />
       );
     

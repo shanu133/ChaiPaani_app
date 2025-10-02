@@ -31,7 +31,7 @@ import {
   Loader2
 } from "lucide-react";
 import { toast } from "sonner@2.0.3";
-import { groupService, authService } from "../lib/supabase-service";
+import { groupService, expenseService, authService } from "../lib/supabase-service";
 import { supabase } from "../lib/supabase";
 
 interface GroupsPageProps {
@@ -51,6 +51,21 @@ interface Group {
   category: string;
   currency: string;
   created_at: string;
+  members: Array<{
+    id: string;
+    name: string;
+    avatar: string;
+  }>;
+}
+
+interface SettleUpGroup {
+  id: string;
+  name: string;
+  description: string;
+  memberCount: number;
+  totalExpenses: number;
+  yourBalance: number;
+  category: string;
   members: Array<{
     id: string;
     name: string;
@@ -91,22 +106,43 @@ export function GroupsPage({ onLogout, onBack, onLogoClick }: GroupsPageProps) {
 
       if (data) {
         // Transform Supabase data to match our Group interface
-        const transformedGroups: Group[] = data.map((group: any) => ({
-          id: group.id,
-          name: group.name,
-          description: group.description,
-          memberCount: group.group_members?.length || 0,
-          totalExpenses: group.expenses?.length || 0, // This should be calculated properly
-          yourBalance: 0, // This should be calculated from balance function
-          recentActivity: "Recently active", // This should be calculated from activities
-          category: group.category,
-          currency: group.currency,
-          created_at: group.created_at,
-          members: group.group_members?.map((member: any) => ({
-            id: member.user_id,
-            name: member.profiles?.full_name || "Unknown",
-            avatar: member.profiles?.full_name?.substring(0, 2).toUpperCase() || "UN"
-          })) || []
+        const transformedGroups: Group[] = await Promise.all(data.map(async (group: any) => {
+          // Calculate total expenses (sum of all expense amounts)
+          const totalExpenses = group.expenses?.reduce((sum: number, expense: any) => sum + expense.amount, 0) || 0;
+
+          // Calculate user's balance in this group
+          let yourBalance = 0;
+          try {
+            const { data: balanceData } = await expenseService.getUserBalance(group.id);
+            if (balanceData && balanceData.length > 0) {
+              yourBalance = balanceData[0].net_balance || 0;
+            }
+          } catch (error) {
+            console.error(`Error fetching balance for group ${group.id}:`, error);
+          }
+
+          // Calculate recent activity
+          const recentActivity = group.expenses?.length > 0
+            ? `Last expense ${new Date(group.expenses[0].created_at).toLocaleDateString()}`
+            : "No recent activity";
+
+          return {
+            id: group.id,
+            name: group.name,
+            description: group.description,
+            memberCount: group.group_members?.length || 0,
+            totalExpenses,
+            yourBalance,
+            recentActivity,
+            category: group.category,
+            currency: group.currency,
+            created_at: group.created_at,
+            members: group.group_members?.map((member: any) => ({
+              id: member.user_id,
+              name: member.profiles?.full_name || "Unknown",
+              avatar: member.profiles?.full_name?.substring(0, 2).toUpperCase() || "UN"
+            })) || []
+          };
         }));
 
         setGroups(transformedGroups);
@@ -137,7 +173,7 @@ export function GroupsPage({ onLogout, onBack, onLogoClick }: GroupsPageProps) {
 
   const filteredGroups = groups.filter(group =>
     group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    group.description.toLowerCase().includes(searchQuery.toLowerCase())
+    (group.description && group.description.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   const getCategoryColor = (category: string) => {
@@ -431,7 +467,7 @@ export function GroupsPage({ onLogout, onBack, onLogoClick }: GroupsPageProps) {
                           variant="ghost"
                           size="sm"
                           className="p-1 h-auto"
-                          onClick={(e) => {
+                          onClick={(e: React.MouseEvent) => {
                             e.stopPropagation();
                             handleGroupMenuAction(group, 'menu');
                           }}
@@ -500,7 +536,7 @@ export function GroupsPage({ onLogout, onBack, onLogoClick }: GroupsPageProps) {
 
                       {/* Quick Actions */}
                       <div className="flex gap-2 pt-2">
-                        <Button variant="outline" size="sm" className="flex-1 min-w-0 text-xs" onClick={(e) => {
+                        <Button variant="outline" size="sm" className="flex-1 min-w-0 text-xs" onClick={(e: React.MouseEvent) => {
                           e.stopPropagation();
                           setSelectedGroup(group);
                           setShowAddExpense(true);
@@ -512,7 +548,7 @@ export function GroupsPage({ onLogout, onBack, onLogoClick }: GroupsPageProps) {
                           variant="outline"
                           size="sm"
                           className="flex-1 min-w-0 text-xs"
-                          onClick={(e) => {
+                          onClick={(e: React.MouseEvent) => {
                             e.stopPropagation();
                             handleGroupMenuAction(group, 'settle');
                           }}
@@ -539,6 +575,11 @@ export function GroupsPage({ onLogout, onBack, onLogoClick }: GroupsPageProps) {
         }}
         groupMembers={selectedGroup?.members || []}
         currentUser={currentUser}
+        groupId={selectedGroup?.id || "demo-group"}
+        onExpenseCreated={() => {
+          console.log("Expense created successfully");
+          fetchUserGroups(); // Refresh groups data
+        }}
       />
 
       <CreateGroupModal
@@ -553,7 +594,11 @@ export function GroupsPage({ onLogout, onBack, onLogoClick }: GroupsPageProps) {
           setShowSettleUp(false);
           setSelectedGroup(null);
         }}
-        group={selectedGroup || undefined}
+        group={selectedGroup ? {
+          id: selectedGroup.id,
+          name: selectedGroup.name,
+          members: selectedGroup.members
+        } : undefined}
         onSettleUp={handleSettleUp}
       />
 
@@ -563,7 +608,10 @@ export function GroupsPage({ onLogout, onBack, onLogoClick }: GroupsPageProps) {
           setShowGroupMenu(false);
           setSelectedGroup(null);
         }}
-        group={selectedGroup || undefined}
+        group={selectedGroup ? {
+          ...selectedGroup,
+          description: selectedGroup.description || ""
+        } : undefined}
         onSettleUp={() => {
           setShowGroupMenu(false);
           setShowSettleUp(true);

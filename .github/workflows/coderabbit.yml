@@ -6,11 +6,21 @@ on:
   issue_comment:
     types: [created]
 
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  issues: write
+
+concurrency:
+  group: coderabbit-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   coderabbit:
     if: >
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@coderabbitai'))
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && contains(github.event.comment.body, '@coderabbitai'))
     runs-on: ubuntu-latest
     steps:
       - name: CodeRabbit

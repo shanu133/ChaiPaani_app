@@ -22,11 +22,8 @@ reviews:
   tools:
     languagetool:
       enabled: false
+    github-checks:
+      annotations: true
+      labels: true
 chat:
   auto_reply: true
-github_checks:
-  annotations: true
-  labels: true
-tracking:
-  issues: true
-  prs: true
