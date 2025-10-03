@@ -1,4 +1,5 @@
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { authService } from "../lib/supabase-service";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -8,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { Plus, X, Users, Mail } from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
+import { groupService, invitationService } from "../lib/supabase-service";
 
 interface CreateGroupModalProps {
   isOpen: boolean;
@@ -31,6 +33,41 @@ export function CreateGroupModal({ isOpen, onClose, onCreateGroup }: CreateGroup
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberEmail, setNewMemberEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [currentUser, setCurrentUser] = useState<{ email: string; name: string; avatar: string } | null>(null);
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      try {
+        setIsLoading(true);
+        const user = await authService.getCurrentUser();
+        
+        // Add null check for user
+        if (!user) {
+          toast.error('You must be logged in to create a group');
+          if (onClose) onClose();
+          return;
+        }
+        
+        // Process user data to set currentUser with correct format
+        const name = user.user_metadata?.full_name || user.email || "User";
+        setCurrentUser({
+          email: user.email || "",
+          name: name,
+          avatar: generateAvatar(name),
+        });
+      } catch (error) {
+        console.error('Error fetching current user:', error);
+        toast.error('Failed to load user information');
+        if (onClose) onClose();
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (isOpen) {
+      fetchUser();
+    }
+  }, [isOpen, onClose]);
 
   const categories = [
     "Work",
@@ -104,38 +141,63 @@ export function CreateGroupModal({ isOpen, onClose, onCreateGroup }: CreateGroup
       return;
     }
 
-    if (members.length === 0) {
-      toast.error("Please add at least one member");
-      return;
-    }
-
     setIsLoading(true);
 
     try {
-      // Add current user to members
-      const allMembers = [
-        { id: "current-user", name: "You", email: "demo@chaipaani.com", avatar: "YU" },
-        ...members
-      ];
+      // Create the group in Supabase
+      const { data: groupData, error: groupError } = await groupService.createGroup(
+        groupName.trim(),
+        description.trim(),
+        category
+      );
 
-      const groupData = {
-        id: Date.now().toString(),
-        name: groupName.trim(),
-        description: description.trim(),
-        category,
-        members: allMembers,
-        memberCount: allMembers.length,
-        totalExpenses: 0,
-        yourBalance: 0,
-        recentActivity: "Just created",
-        createdAt: new Date().toISOString()
-      };
+      if (groupError) {
+        console.error("Error creating group:", groupError);
+        toast.error("Failed to create group");
+        return;
+      }
 
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (!groupData) {
+        toast.error("Failed to create group - no data returned");
+        return;
+      }
 
-      onCreateGroup(groupData);
       toast.success(`Group "${groupName}" created successfully!`);
+
+      // Send invitations to added members
+      if (members.length > 0) {
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const member of members) {
+          try {
+            const { error: inviteError } = await invitationService.inviteUser(
+              groupData.id,
+              member.email
+            );
+
+            if (inviteError) {
+              console.error(`Error inviting ${member.email}:`, inviteError);
+              failCount++;
+            } else {
+              successCount++;
+            }
+          } catch (error) {
+            console.error(`Error inviting ${member.email}:`, error);
+            failCount++;
+          }
+        }
+
+        if (successCount > 0) {
+          toast.success(`${successCount} invitation(s) sent successfully!`);
+        }
+        if (failCount > 0) {
+          toast.error(`${failCount} invitation(s) failed to send`);
+        }
+      }
+
+      // Call parent callback with the created group data
+      onCreateGroup(groupData);
       
       // Reset form
       setGroupName("");
@@ -144,6 +206,7 @@ export function CreateGroupModal({ isOpen, onClose, onCreateGroup }: CreateGroup
       setMembers([]);
       onClose();
     } catch (error) {
+      console.error("Error in handleCreateGroup:", error);
       toast.error("Failed to create group. Please try again.");
     } finally {
       setIsLoading(false);
@@ -257,16 +320,18 @@ export function CreateGroupModal({ isOpen, onClose, onCreateGroup }: CreateGroup
                 <Label>Group Members ({members.length + 1})</Label>
                 <div className="space-y-2 max-h-32 overflow-y-auto">
                   {/* Current user */}
-                  <div className="flex items-center gap-3 p-2 bg-muted/50 rounded-lg">
-                    <Avatar className="w-8 h-8">
-                      <AvatarFallback className="text-xs">YU</AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm">You (Admin)</p>
-                      <p className="text-xs text-muted-foreground truncate">demo@chaipaani.com</p>
+                  {currentUser && (
+                    <div className="flex items-center gap-3 p-2 bg-muted/50 rounded-lg">
+                      <Avatar className="w-8 h-8">
+                        <AvatarFallback className="text-xs">{currentUser.avatar}</AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm">{currentUser.name} (Admin)</p>
+                        <p className="text-xs text-muted-foreground truncate">{currentUser.email}</p>
+                      </div>
+                      <Badge variant="secondary" className="text-xs">Admin</Badge>
                     </div>
-                    <Badge variant="secondary" className="text-xs">Admin</Badge>
-                  </div>
+                  )}
 
                   {/* Added members */}
                   {members.map((member) => (
@@ -306,7 +371,7 @@ export function CreateGroupModal({ isOpen, onClose, onCreateGroup }: CreateGroup
             </Button>
             <Button 
               onClick={handleCreateGroup} 
-              disabled={isLoading || !groupName.trim() || !category || members.length === 0}
+              disabled={isLoading || !groupName.trim() || !category}
               className="sm:flex-1"
             >
               {isLoading ? "Creating..." : "Create Group"}

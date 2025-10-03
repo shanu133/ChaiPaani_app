@@ -50,8 +50,18 @@ CREATE POLICY "Users can view group memberships for groups they belong to" ON gr
     )
   );
 
-CREATE POLICY "Group admins can manage memberships" ON group_members
-  FOR ALL USING (
+CREATE POLICY "Group admins can update memberships" ON group_members
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM group_members gm
+      WHERE gm.group_id = group_members.group_id
+      AND gm.user_id = auth.uid()
+      AND gm.role = 'admin'
+    )
+  );
+
+CREATE POLICY "Group admins can delete memberships" ON group_members
+  FOR DELETE USING (
     EXISTS (
       SELECT 1 FROM group_members gm
       WHERE gm.group_id = group_members.group_id

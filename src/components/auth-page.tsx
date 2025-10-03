@@ -5,8 +5,8 @@ import { Label } from "./ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Separator } from "./ui/separator";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
-import ChaiPaaniLogo from "figma:asset/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
-import ChaiPaaniLogoFull from "figma:asset/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
+import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
+import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
 import { ArrowLeft, Mail, Lock, Eye, EyeOff, Phone, Loader2 } from "lucide-react";
 import { authService } from "../lib/supabase-service";
 
@@ -19,8 +19,7 @@ interface AuthPageProps {
 export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -31,60 +30,44 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setError(null);
+    setIsLoading(true);
 
     try {
       if (isLogin) {
+        // Sign in
         const { data, error } = await authService.signIn(formData.email, formData.password);
-        if (error) {
-          setError(error.message);
-        } else {
-          console.log("Sign in successful:", data);
-          onLogin();
-        }
+        if (error) throw error;
+        console.log("Signed in successfully!");
       } else {
+        // Sign up
         if (formData.password !== formData.confirmPassword) {
-          setError("Passwords do not match");
-          setLoading(false);
-          return;
+          throw new Error("Passwords don't match");
         }
-
         const { data, error } = await authService.signUp(formData.email, formData.password, formData.name);
-        if (error) {
-          setError(error.message);
-        } else {
-          console.log("Sign up successful:", data);
-          setError("Check your email for verification link!");
-        }
+        if (error) throw error;
+        console.log("Account created successfully!");
       }
-    } catch (err) {
-      setError("An unexpected error occurred");
+      // Auth state change will be handled by the listener in App.tsx
+    } catch (error: any) {
+      console.error("Auth error:", error);
+      console.error(error.message || "Authentication failed");
+    } finally {
+      setIsLoading(false);
     }
-
-    setLoading(false);
   };
 
   const handleSocialLogin = async (provider: string) => {
     if (provider === "google") {
-      setLoading(true);
-      setError(null);
-
+      setIsLoading(true);
       try {
         const { data, error } = await authService.signInWithGoogle();
-        if (error) {
-          setError(error.message);
-        } else {
-          console.log("Google sign in initiated:", data);
-          // The redirect will happen automatically to /auth/callback
-          // But since we're using view-based routing, we need to handle this differently
-          // The auth callback will be handled by Supabase's redirect
-        }
-      } catch (err) {
-        setError("Failed to initiate Google sign in");
+        if (error) throw error;
+        // OAuth redirect will handle the rest
+      } catch (error: any) {
+        console.error("Social login error:", error);
+        console.error(error.message || "Social login failed");
+        setIsLoading(false);
       }
-
-      setLoading(false);
     }
   };
 
@@ -185,31 +168,19 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
             </CardHeader>
 
             <CardContent className="space-y-6">
-              {/* Error Display */}
-              {error && (
-                <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md">
-                  {error}
-                </div>
-              )}
-
               {/* Social Login */}
               <div className="space-y-3">
-                <Button
-                  variant="outline"
+                <Button 
+                  variant="outline" 
                   className="w-full"
                   onClick={() => handleSocialLogin("google")}
-                  disabled={loading}
                 >
-                  {loading ? (
-                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  ) : (
-                    <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
-                      <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                      <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                      <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                      <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                    </svg>
-                  )}
+                  <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
+                    <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                  </svg>
                   Continue with Google
                 </Button>
                 
@@ -326,8 +297,8 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
                   </div>
                 )}
 
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? (
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                  {isLoading ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                       {isLogin ? "Signing In..." : "Creating Account..."}
@@ -352,17 +323,10 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
                 </p>
               </div>
 
-              {/* Quick Demo */}
+              {/* Demo Note */}
               <div className="border-t pt-4">
-                <Button 
-                  variant="outline" 
-                  className="w-full"
-                  onClick={onLogin}
-                >
-                  Continue with Demo Account
-                </Button>
-                <p className="text-xs text-muted-foreground text-center mt-2">
-                  Explore ChaiPaani without creating an account
+                <p className="text-xs text-muted-foreground text-center">
+                  For demo purposes, you can sign up with any email and password
                 </p>
               </div>
 

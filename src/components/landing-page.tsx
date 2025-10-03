@@ -1,13 +1,13 @@
-import image_b5db5f5d96d176bece696628ff617915d1bbc7ad from 'figma:asset/b5db5f5d96d176bece696628ff617915d1bbc7ad.png';
-import image_d36983d55291d2aa07d6d41e4b6af5a1ee1115a9 from 'figma:asset/d36983d55291d2aa07d6d41e4b6af5a1ee1115a9.png';
+import image_b5db5f5d96d176bece696628ff617915d1bbc7ad from '../assets/b5db5f5d96d176bece696628ff617915d1bbc7ad.png';
+import image_d36983d55291d2aa07d6d41e4b6af5a1ee1115a9 from '../assets/d36983d55291d2aa07d6d41e4b6af5a1ee1115a9.png';
 import { useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
-import ChaiPaaniLogo from "figma:asset/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
-import ChaiPaaniLogoFull from "figma:asset/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
+import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
+import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
 import { 
   Users, 
   Calculator, 

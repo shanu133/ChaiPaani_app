@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Avatar, AvatarFallback } from "./ui/avatar";
@@ -7,9 +7,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Calendar } from "./ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import ChaiPaaniLogo from "figma:asset/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
-import ChaiPaaniLogoFull from "figma:asset/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
-import { 
+import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
+import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
+import { expenseService } from "../lib/supabase-service";
+import { toast } from "sonner";
+import {
   ArrowLeft,
   Receipt,
   IndianRupee,
@@ -25,7 +27,8 @@ import {
   Clock,
   CheckCircle,
   AlertCircle,
-  DollarSign
+  DollarSign,
+  Loader2
 } from "lucide-react";
 
 interface ActivityPageProps {
@@ -56,86 +59,7 @@ interface ActivityItem {
   };
 }
 
-// Mock activity data
-const mockActivities: ActivityItem[] = [
-  {
-    id: '1',
-    type: 'expense_added',
-    title: 'New Expense Added',
-    description: 'Rahul added "Dinner at Pizza Hut" for ₹1,200',
-    timestamp: new Date(Date.now() - 2 * 60 * 1000),
-    user: { name: 'Rahul', avatar: 'R' },
-    group: { name: 'Goa Trip 2024', id: 'g1' },
-    metadata: { amount: 1200, expenseTitle: 'Dinner at Pizza Hut' }
-  },
-  {
-    id: '2',
-    type: 'payment_made',
-    title: 'Payment Completed',
-    description: 'Priya paid ₹450 to you for "Uber rides"',
-    timestamp: new Date(Date.now() - 15 * 60 * 1000),
-    user: { name: 'Priya', avatar: 'P' },
-    group: { name: 'Office Lunch Group', id: 'g2' },
-    metadata: { amount: 450, payerName: 'Priya', receiverName: 'You' }
-  },
-  {
-    id: '3',
-    type: 'member_joined',
-    title: 'Member Joined',
-    description: 'Amit joined the group',
-    timestamp: new Date(Date.now() - 30 * 60 * 1000),
-    user: { name: 'Amit', avatar: 'A' },
-    group: { name: 'Weekend Movie Gang', id: 'g3' }
-  },
-  {
-    id: '4',
-    type: 'expense_updated',
-    title: 'Expense Updated',
-    description: 'Neha updated "Coffee meetup" amount to ₹280',
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    user: { name: 'Neha', avatar: 'N' },
-    group: { name: 'Friends Circle', id: 'g4' },
-    metadata: { amount: 280, expenseTitle: 'Coffee meetup' }
-  },
-  {
-    id: '5',
-    type: 'settlement_completed',
-    title: 'Settlement Completed',
-    description: 'Karan settled up ₹1,125 with the group',
-    timestamp: new Date(Date.now() - 4 * 60 * 60 * 1000),
-    user: { name: 'Karan', avatar: 'K' },
-    group: { name: 'Goa Trip 2024', id: 'g1' },
-    metadata: { amount: 1125 }
-  },
-  {
-    id: '6',
-    type: 'group_created',
-    title: 'Group Created',
-    description: 'Pooja created "Office Lunch Group"',
-    timestamp: new Date(Date.now() - 6 * 60 * 60 * 1000),
-    user: { name: 'Pooja', avatar: 'P' },
-    group: { name: 'Office Lunch Group', id: 'g2' }
-  },
-  {
-    id: '7',
-    type: 'member_left',
-    title: 'Member Left',
-    description: 'Rohan left "Weekend Movie Gang"',
-    timestamp: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-    user: { name: 'Rohan', avatar: 'R' },
-    group: { name: 'Weekend Movie Gang', id: 'g3' }
-  },
-  {
-    id: '8',
-    type: 'payment_made',
-    title: 'Payment Completed',
-    description: 'You paid ₹600 to Amit for "Movie tickets"',
-    timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-    user: { name: 'You', avatar: 'Y' },
-    group: { name: 'Weekend Movie Gang', id: 'g3' },
-    metadata: { amount: 600, payerName: 'You', receiverName: 'Amit' }
-  }
-];
+// Real activity data will be fetched from Supabase
 
 const getActivityIcon = (type: ActivityItem['type']) => {
   switch (type) {
@@ -189,11 +113,60 @@ const groupActivitiesByDate = (activities: ActivityItem[]) => {
 };
 
 export function ActivityPage({ onBack, onLogoClick }: ActivityPageProps) {
-  const [activities] = useState<ActivityItem[]>(mockActivities);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
   const [dateRange, setDateRange] = useState<Date | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<'timeline' | 'summary'>('timeline');
+
+  // Fetch real activity data on component mount
+  useEffect(() => {
+    fetchActivities();
+  }, []);
+
+  const fetchActivities = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await expenseService.getActivitySafe();
+
+      if (error) {
+        console.error("Error fetching activities:", error);
+        toast.error("Failed to load activities");
+        return;
+      }
+
+      if (data) {
+        // Transform Supabase data to match our ActivityItem interface
+        const transformedActivities: ActivityItem[] = data.map((activity: any) => ({
+          id: activity.id,
+          type: 'expense_added' as ActivityItem['type'], // Default to expense_added for now
+          title: activity.payer.isCurrentUser ? 'You added an expense' : `${activity.payer.name} added an expense`,
+          description: `${activity.payer.name} added "${activity.description}" for ₹${activity.amount}`,
+          timestamp: new Date(activity.created_at),
+          user: {
+            name: activity.payer.name,
+            avatar: activity.payer.name.substring(0, 1).toUpperCase()
+          },
+          group: {
+            name: activity.group.name,
+            id: activity.group.id
+          },
+          metadata: {
+            amount: activity.amount,
+            expenseTitle: activity.description
+          }
+        }));
+
+        setActivities(transformedActivities);
+      }
+    } catch (error) {
+      console.error("Error fetching activities:", error);
+      toast.error("Failed to load activities");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Get unique groups
   const groups = Array.from(new Set(activities.map(a => a.group.name)));
@@ -350,7 +323,7 @@ export function ActivityPage({ onBack, onLogoClick }: ActivityPageProps) {
         </Card>
 
         {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'timeline' | 'summary')}>
+        <Tabs value={activeTab} onValueChange={(value: string) => setActiveTab(value as 'timeline' | 'summary')}>
           <TabsList className="mb-6">
             <TabsTrigger value="timeline">Timeline</TabsTrigger>
             <TabsTrigger value="summary">Summary</TabsTrigger>
@@ -410,7 +383,24 @@ export function ActivityPage({ onBack, onLogoClick }: ActivityPageProps) {
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
-                {Object.keys(groupedActivities).length === 0 ? (
+                {loading ? (
+                  // Loading skeleton
+                  <div className="p-4 space-y-4">
+                    {Array.from({ length: 3 }).map((_, index) => (
+                      <div key={index} className="flex items-start gap-3 p-4">
+                        <div className="w-10 h-10 bg-muted rounded-full animate-pulse" />
+                        <div className="flex-1 space-y-2">
+                          <div className="flex justify-between">
+                            <div className="h-4 bg-muted rounded w-32 animate-pulse" />
+                            <div className="h-3 bg-muted rounded w-16 animate-pulse" />
+                          </div>
+                          <div className="h-4 bg-muted rounded w-full animate-pulse" />
+                          <div className="h-3 bg-muted rounded w-3/4 animate-pulse" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : Object.keys(groupedActivities).length === 0 ? (
                   <div className="p-8 text-center">
                     <ActivityIcon className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                     <h3 className="text-lg font-medium mb-2">No activities found</h3>

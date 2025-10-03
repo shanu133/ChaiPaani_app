@@ -14,17 +14,18 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Path alias resolution to match Vite aliases */
+    "baseUrl": "./",
+    "paths": {
+      "@/*": ["src/*"],
+      "@": ["src"]
+    },
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-
-    /* Path mapping */
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
+    "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]

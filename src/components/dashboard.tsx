@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect } from 'react'
 import { Button } from "./ui/button";
 import {
   Card,
@@ -8,13 +8,12 @@ import {
 } from "./ui/card";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Badge } from "./ui/badge";
-import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { AddExpenseModal } from "./add-expense-modal";
 import { CreateGroupModal } from "./create-group-modal";
 import { SettleUpModal } from "./settle-up-modal";
 import { ScanReceiptModal } from "./scan-receipt-modal";
-import ChaiPaaniLogo from "figma:asset/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
-import ChaiPaaniLogoFull from "figma:asset/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
+import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
+import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
 import {
   Plus,
   Users,
@@ -56,6 +55,11 @@ export function Dashboard({
   const [isScanReceiptModalOpen, setIsScanReceiptModalOpen] = useState(false);
 
   // Real data state
+  interface BalanceItem {
+    amount: number;
+    [key: string]: any; // Add more fields as needed
+  }
+
   const [groups, setGroups] = useState<any[]>([]);
   const [recentExpenses, setRecentExpenses] = useState<any[]>([]);
   const [userBalance, setUserBalance] = useState({ owed: 0, owes: 0, net: 0 });
@@ -87,12 +91,31 @@ export function Dashboard({
       const { data: balanceData, error: balanceError } = await expenseService.getUserBalance();
       if (balanceError) throw balanceError;
 
-      // Calculate balance summary
-      if (balanceData) {
-        const owed = balanceData.filter((item: any) => item.amount > 0).reduce((sum: number, item: any) => sum + item.amount, 0);
-        const owes = Math.abs(balanceData.filter((item: any) => item.amount < 0).reduce((sum: number, item: any) => sum + item.amount, 0));
-        setUserBalance({ owed, owes, net: owed - owes });
+      // Normalize balanceData to array if needed
+      let balances: BalanceItem[] = [];
+      if (Array.isArray(balanceData)) {
+        balances = balanceData as BalanceItem[];
+      } else if (balanceData && typeof balanceData === "object") {
+        balances = [balanceData as BalanceItem];
       }
+
+      // Calculate balance summary
+// Calculate balance summary
+if (balances.length > 0) {
+  const owed = balances
+    .filter((item) => typeof item.amount === "number" && item.amount > 0)
+    .reduce((sum, item) => sum + item.amount, 0);
+  const owes = Math.abs(
+    balances
+      .filter((item) => typeof item.amount === "number" && item.amount < 0)
+      .reduce((sum, item) => sum + item.amount, 0)
+  );
+  setUserBalance({ owed, owes, net: owed - owes });
+} else {
+  // Avoid stale totals if API returns empty/null
+  setUserBalance({ owed: 0, owes: 0, net: 0 });
+}
+      
 
     } catch (err: any) {
       console.error("Error fetching dashboard data:", err);
@@ -528,7 +551,7 @@ export function Dashboard({
       <AddExpenseModal
         isOpen={isAddExpenseModalOpen}
         onClose={() => setIsAddExpenseModalOpen(false)}
-        groupMembers={groups.length > 0 ? groups.slice(0, 4).map((group, index) => ({
+        groupMembers={groups.length > 0 ? groups.slice(0, 4).map((group) => ({
           id: group.id,
           name: group.name,
           avatar: group.name.substring(0, 2).toUpperCase()
@@ -566,8 +589,8 @@ export function Dashboard({
       <ScanReceiptModal
         isOpen={isScanReceiptModalOpen}
         onClose={() => setIsScanReceiptModalOpen(false)}
-        onReceiptScanned={(receiptData) => {
-          console.log("Receipt scanned:", receiptData);
+        onSuccess={() => {
+          console.log("Receipt scanned");
           setIsScanReceiptModalOpen(false);
           setIsAddExpenseModalOpen(true);
         }}

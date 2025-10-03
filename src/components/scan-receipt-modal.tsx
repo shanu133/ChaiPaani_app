@@ -1,400 +1,301 @@
-import { useState, useRef } from "react";
-import { Button } from "./ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
-import { Alert, AlertDescription } from "./ui/alert";
-import { Progress } from "./ui/progress";
-import { Badge } from "./ui/badge";
-import { 
-  Camera, 
-  Upload, 
-  FileImage, 
-  Scan, 
-  CheckCircle, 
-  AlertCircle,
-  X,
-  RotateCw,
-  Zap
-} from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import React, { useState } from 'react';
+import { Button } from './ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { Separator } from './ui/separator';
+import { Card, CardContent } from './ui/card';
+import { RadioGroup, RadioGroupItem } from './ui/radio-group';
+import { toast } from 'sonner';
+import { Scan, FileImage, Camera, ArrowRight, CheckCircle, AlertCircle, X, Upload } from 'lucide-react';
 
 interface ScanReceiptModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onReceiptScanned: (receiptData: ReceiptData) => void;
+  onSuccess?: () => void;
 }
 
-interface ReceiptData {
-  merchant: string;
-  total: number;
-  date: string;
-  items: Array<{
-    name: string;
-    price: number;
-    quantity: number;
-  }>;
-  category: string;
-  confidence: number;
-}
-
-export function ScanReceiptModal({ isOpen, onClose, onReceiptScanned }: ScanReceiptModalProps) {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState(0);
-  const [scanResult, setScanResult] = useState<ReceiptData | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [scanStep, setScanStep] = useState<'upload' | 'scanning' | 'result'>('upload');
-
-  // Mock receipt data for demonstration
-  const mockReceiptData: ReceiptData = {
-    merchant: "Udupi Palace Restaurant",
-    total: 1247.50,
+export const ScanReceiptModal: React.FC<ScanReceiptModalProps> = ({ isOpen, onClose, onSuccess }) => {
+  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState<number>(1);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [extractedItems, setExtractedItems] = useState<Array<{name: string, price: number, quantity: number}>>([]);
+  const [receiptDetails, setReceiptDetails] = useState<{
+    merchantName: string;
+    date: string;
+    totalAmount: number;
+  }>({
+    merchantName: '',
     date: new Date().toISOString().split('T')[0],
-    items: [
-      { name: "Masala Dosa", price: 180, quantity: 2 },
-      { name: "Idli Sambar", price: 120, quantity: 1 },
-      { name: "Filter Coffee", price: 45, quantity: 3 },
-      { name: "Vada", price: 60, quantity: 2 },
-      { name: "Coconut Chutney", price: 25, quantity: 1 },
-      { name: "Service Charge", price: 62.40, quantity: 1 },
-      { name: "GST (5%)", price: 59.38, quantity: 1 }
-    ],
-    category: "Food",
-    confidence: 92
-  };
+    totalAmount: 0,
+  });
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      toast.error("Please select an image file");
-      return;
-    }
-
-    // Validate file size (max 10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error("File size must be less than 10MB");
-      return;
-    }
-
-    setSelectedFile(file);
-    
-    // Create preview URL
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
-    
-    toast.success("Receipt image selected successfully");
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setUploadedImage(event.target?.result as string);
+      setCurrentStep(2);
+      toast.info('Image uploaded successfully');
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleCameraCapture = () => {
-    // Trigger file input to open camera on mobile devices
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
+    // This would integrate with device camera in a real implementation
+    toast.info('Camera capture functionality would be implemented here');
   };
 
-  const simulateScanning = async () => {
-    setIsScanning(true);
-    setScanStep('scanning');
-    setScanProgress(0);
+  const simulateImageProcessing = () => {
+    setIsProcessing(true);
+    toast.info('Processing receipt image...');
 
-    // Simulate scanning progress
-    const intervals = [
-      { progress: 20, message: "Analyzing image quality..." },
-      { progress: 40, message: "Detecting text regions..." },
-      { progress: 60, message: "Extracting text content..." },
-      { progress: 80, message: "Parsing receipt data..." },
-      { progress: 95, message: "Validating information..." },
-      { progress: 100, message: "Scan complete!" }
-    ];
-
-    for (const interval of intervals) {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      setScanProgress(interval.progress);
-    }
-
-    // Set mock result
-    setScanResult(mockReceiptData);
-    setScanStep('result');
-    setIsScanning(false);
-    toast.success("Receipt scanned successfully!");
+    // Simulate API call with timeout
+    setTimeout(() => {
+      setExtractedItems([
+        { name: 'Coffee', price: 4.50, quantity: 2 },
+        { name: 'Bagel with Cream Cheese', price: 3.75, quantity: 1 },
+        { name: 'Orange Juice', price: 2.25, quantity: 1 },
+      ]);
+      setReceiptDetails({
+        merchantName: 'Starbucks Coffee',
+        date: new Date().toISOString().split('T')[0],
+        totalAmount: 15.00,
+      });
+      setCurrentStep(3);
+      setIsProcessing(false);
+      toast.success('Receipt data extracted successfully');
+    }, 2000);
   };
 
-  const handleScanReceipt = async () => {
-    if (!selectedFile) {
-      toast.error("Please select a receipt image first");
-      return;
-    }
-
-    await simulateScanning();
-  };
-
-  const handleConfirmScan = () => {
-    if (scanResult) {
-      onReceiptScanned(scanResult);
-      toast.success("Receipt data added to expense");
-      handleClose();
-    }
-  };
-
-  const handleRetry = () => {
-    setScanStep('upload');
-    setScanResult(null);
-    setScanProgress(0);
-    setSelectedFile(null);
-    setPreviewUrl(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  const handleClose = () => {
-    setScanStep('upload');
-    setScanResult(null);
-    setScanProgress(0);
-    setSelectedFile(null);
-    setPreviewUrl(null);
-    setIsScanning(false);
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+  const handleConfirmDetails = () => {
+    toast.success('Expense created from receipt');
+    onSuccess?.();
     onClose();
   };
 
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 85) return "text-green-600";
-    if (confidence >= 70) return "text-yellow-600";
-    return "text-red-600";
+  const handleBack = () => {
+    if (currentStep === 2) {
+      setUploadedImage(null);
+    }
+    setCurrentStep(prev => Math.max(1, prev - 1));
   };
 
-  const getConfidenceBadge = (confidence: number) => {
-    if (confidence >= 85) return { variant: "default" as const, label: "High Confidence" };
-    if (confidence >= 70) return { variant: "secondary" as const, label: "Medium Confidence" };
-    return { variant: "destructive" as const, label: "Low Confidence" };
+  const handleCancel = () => {
+    setUploadedImage(null);
+    setCurrentStep(1);
+    setIsProcessing(false);
+    onClose();
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
+    <Dialog open={isOpen} onOpenChange={handleCancel}>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Scan className="w-5 h-5 text-primary" />
+            <Scan className="h-5 w-5" />
             Scan Receipt
           </DialogTitle>
           <DialogDescription>
-            Upload a photo of your receipt and let AI extract all the expense details automatically.
+            Upload a receipt image to automatically extract expense details
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6 pt-4">
-          {scanStep === 'upload' && (
-            <>
-              {/* Upload Area */}
-              <div className="space-y-4">
-                <Alert>
-                  <Zap className="h-4 w-4" />
-                  <AlertDescription>
-                    Upload a clear photo of your receipt. AI will extract all expense details automatically.
-                  </AlertDescription>
-                </Alert>
-
-                <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-6">
-                  <div className="text-center space-y-4">
-                    <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
-                      <FileImage className="w-8 h-8 text-primary" />
-                    </div>
-                    
-                    <div>
-                      <h3 className="font-medium">Upload Receipt Photo</h3>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        JPG, PNG, or HEIC up to 10MB
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                      <Button 
-                        variant="outline" 
-                        className="gap-2"
-                        onClick={() => fileInputRef.current?.click()}
-                      >
-                        <Upload className="w-4 h-4" />
-                        Choose File
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        className="gap-2"
-                        onClick={handleCameraCapture}
-                      >
-                        <Camera className="w-4 h-4" />
-                        Take Photo
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-
-                {/* Preview */}
-                {previewUrl && (
-                  <div className="space-y-3">
-                    <div className="relative">
-                      <img 
-                        src={previewUrl} 
-                        alt="Receipt preview" 
-                        className="w-full max-h-64 object-contain rounded-lg border"
-                      />
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="absolute top-2 right-2"
-                        onClick={handleRetry}
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                    
-                    <Button 
-                      className="w-full gap-2" 
-                      onClick={handleScanReceipt}
-                    >
-                      <Scan className="w-4 h-4" />
-                      Scan Receipt
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-
-          {scanStep === 'scanning' && (
-            <div className="space-y-6 text-center">
-              <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
-                <Scan className="w-8 h-8 text-primary animate-pulse" />
-              </div>
+        {currentStep === 1 && (
+          <div className="grid gap-6 py-4">
+            <Tabs defaultValue="upload" className="w-full">
+              <TabsList className="grid grid-cols-2 mb-6">
+                <TabsTrigger value="upload">Upload Image</TabsTrigger>
+                <TabsTrigger value="camera">Take Photo</TabsTrigger>
+              </TabsList>
               
-              <div className="space-y-3">
-                <h3 className="font-medium">Scanning Receipt...</h3>
-                <Progress value={scanProgress} className="h-2" />
-                <p className="text-sm text-muted-foreground">
-                  {scanProgress < 20 && "Analyzing image quality..."}
-                  {scanProgress >= 20 && scanProgress < 40 && "Detecting text regions..."}
-                  {scanProgress >= 40 && scanProgress < 60 && "Extracting text content..."}
-                  {scanProgress >= 60 && scanProgress < 80 && "Parsing receipt data..."}
-                  {scanProgress >= 80 && scanProgress < 100 && "Validating information..."}
-                  {scanProgress >= 100 && "Scan complete!"}
-                </p>
-              </div>
-            </div>
-          )}
+              <TabsContent value="upload" className="space-y-4">
+                <Card className="border-2 border-dashed">
+                  <CardContent className="p-8 flex flex-col items-center justify-center text-center">
+                    <Upload className="h-12 w-12 text-muted-foreground mb-4" />
+                    <h4 className="font-medium mb-1">Drag and drop your receipt image here</h4>
+                    <p className="text-sm text-muted-foreground mb-4">Supports JPG, PNG, and PDF files up to 5MB</p>
+                    <div className="relative">
+                      <Button variant="default">Select File</Button>
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        onChange={handleImageUpload}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+              
+              <TabsContent value="camera" className="space-y-4">
+                <Card className="border-2 border-dashed">
+                  <CardContent className="p-8 flex flex-col items-center justify-center text-center">
+                    <Camera className="h-12 w-12 text-muted-foreground mb-4" />
+                    <h4 className="font-medium mb-1">Take a photo of your receipt</h4>
+                    <p className="text-sm text-muted-foreground mb-4">Ensure good lighting and clear focus</p>
+                    <Button variant="default" onClick={handleCameraCapture}>
+                      Open Camera
+                    </Button>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+          </div>
+        )}
 
-          {scanStep === 'result' && scanResult && (
-            <div className="space-y-6">
-              <div className="flex items-center gap-3">
-                <CheckCircle className="w-6 h-6 text-green-600" />
-                <div>
-                  <h3 className="font-medium">Receipt Scanned Successfully</h3>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge {...getConfidenceBadge(scanResult.confidence)}>
-                      {getConfidenceBadge(scanResult.confidence).label}
-                    </Badge>
-                    <span className={`text-sm ${getConfidenceColor(scanResult.confidence)}`}>
-                      {scanResult.confidence}% accuracy
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Extracted Data */}
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Merchant</p>
-                    <p className="font-medium">{scanResult.merchant}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Date</p>
-                    <p className="font-medium">{scanResult.date}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total Amount</p>
-                    <p className="font-semibold text-lg text-primary">₹{scanResult.total}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Category</p>
-                    <Badge variant="outline">{scanResult.category}</Badge>
-                  </div>
-                </div>
-
-                {/* Items */}
-                <div className="space-y-2">
-                  <h4 className="font-medium text-sm">Items ({scanResult.items.length})</h4>
-                  <div className="max-h-32 overflow-y-auto space-y-1">
-                    {scanResult.items.map((item, index) => (
-                      <div key={index} className="flex justify-between items-center text-sm p-2 bg-background border rounded">
-                        <span>{item.name} {item.quantity > 1 && `(${item.quantity}x)`}</span>
-                        <span className="font-medium">₹{item.price}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {scanResult.confidence < 85 && (
-                  <Alert>
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>
-                      Please review the extracted data carefully. You can edit the details when creating the expense.
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </div>
-
-              {/* Actions */}
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Button 
-                  variant="outline" 
-                  onClick={handleRetry}
-                  className="sm:flex-1 gap-2"
+        {currentStep === 2 && (
+          <div className="grid gap-6 py-4">
+            {uploadedImage && (
+              <div className="relative rounded-lg overflow-hidden border">
+                <img
+                  src={uploadedImage}
+                  alt="Receipt preview"
+                  className="w-full h-auto max-h-64 object-contain"
+                />
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="absolute top-2 right-2 rounded-full h-8 w-8 p-0"
+                  onClick={() => setUploadedImage(null)}
                 >
-                  <RotateCw className="w-4 h-4" />
-                  Scan Again
-                </Button>
-                <Button 
-                  onClick={handleConfirmScan}
-                  className="sm:flex-1 gap-2"
-                >
-                  <CheckCircle className="w-4 h-4" />
-                  Use This Data
+                  <X className="h-4 w-4" />
                 </Button>
               </div>
-            </div>
-          )}
-
-          {/* Close Button */}
-          {scanStep === 'upload' && (
-            <div className="pt-2">
-              <Button 
-                variant="outline" 
-                className="w-full" 
-                onClick={handleClose}
+            )}
+            
+            <div className="space-y-4">
+              <h4 className="font-medium">Process Receipt</h4>
+              <p className="text-sm text-muted-foreground">
+                Our AI will extract merchant name, date, total amount, and individual items from your receipt.
+              </p>
+              <Button
+                variant="default"
+                className="w-full"
+                onClick={simulateImageProcessing}
+                disabled={isProcessing}
               >
-                Cancel
+                {isProcessing ? (
+                  <>
+                    <div className="mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Processing...
+                  </>
+                ) : (
+                  'Extract Information'
+                )}
               </Button>
             </div>
+          </div>
+        )}
+
+        {currentStep === 3 && (
+          <div className="grid gap-6 py-4">
+            <div className="space-y-4">
+              <h4 className="font-medium">Review Extracted Information</h4>
+              
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 items-center gap-2">
+                  <Label htmlFor="merchant-name" className="text-right">Merchant:</Label>
+                  <Input
+                    id="merchant-name"
+                    className="col-span-2"
+                    value={receiptDetails.merchantName}
+                    onChange={(e) => setReceiptDetails({ ...receiptDetails, merchantName: e.target.value })}
+                  />
+                </div>
+                
+                <div className="grid grid-cols-3 items-center gap-2">
+                  <Label htmlFor="receipt-date" className="text-right">Date:</Label>
+                  <Input
+                    id="receipt-date"
+                    type="date"
+                    className="col-span-2"
+                    value={receiptDetails.date}
+                    onChange={(e) => setReceiptDetails({ ...receiptDetails, date: e.target.value })}
+                  />
+                </div>
+                
+                <div className="grid grid-cols-3 items-center gap-2">
+                  <Label htmlFor="total-amount" className="text-right">Total Amount:</Label>
+                  <Input
+                    id="total-amount"
+                    type="number"
+                    step="0.01"
+                    className="col-span-2"
+                    value={receiptDetails.totalAmount}
+                    onChange={(e) => setReceiptDetails({ ...receiptDetails, totalAmount: parseFloat(e.target.value) || 0 })}
+                  />
+                </div>
+              </div>
+              
+              <Separator />
+              
+              <div className="space-y-3">
+                <h5 className="font-medium">Extracted Items</h5>
+                {extractedItems.map((item, index) => (
+                  <div key={index} className="grid grid-cols-12 gap-2 items-center p-2 rounded-lg bg-muted/30">
+                    <div className="col-span-6">
+                      <Input
+                        value={item.name}
+                        onChange={(e) => {
+                          const updatedItems = [...extractedItems];
+                          updatedItems[index].name = e.target.value;
+                          setExtractedItems(updatedItems);
+                        }}
+                      />
+                    </div>
+                    <div className="col-span-3">
+                      <Input
+                        type="number"
+                        min="1"
+                        value={item.quantity}
+                        onChange={(e) => {
+                          const updatedItems = [...extractedItems];
+                          updatedItems[index].quantity = parseInt(e.target.value) || 1;
+                          setExtractedItems(updatedItems);
+                        }}
+                      />
+                    </div>
+                    <div className="col-span-3">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={item.price}
+                        onChange={(e) => {
+                          const updatedItems = [...extractedItems];
+                          updatedItems[index].price = parseFloat(e.target.value) || 0;
+                          setExtractedItems(updatedItems);
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-3 pt-4">
+          {currentStep > 1 && (
+            <Button variant="outline" onClick={handleBack}>
+              Back
+            </Button>
+          )}
+          {currentStep < 3 && (
+            <Button variant="destructive" onClick={handleCancel} className={currentStep === 1 ? 'ml-auto' : ''}>
+              Cancel
+            </Button>
+          )}
+          {currentStep === 3 && (
+            <Button variant="default" onClick={handleConfirmDetails} className="ml-auto">
+              Confirm & Create Expense
+            </Button>
           )}
         </div>
       </DialogContent>
     </Dialog>
   );
-}
+};

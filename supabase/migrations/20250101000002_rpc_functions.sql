@@ -1,12 +1,22 @@
 -- Function to create expense with splits
+-- split_tolerance: The maximum allowed difference between the sum of splits and the total amount, to account for floating-point rounding issues. Adjust as needed for different currencies.
 CREATE OR REPLACE FUNCTION create_expense_with_splits(
   p_group_id UUID,
   p_description TEXT,
   p_amount DECIMAL(10,2),
   p_category TEXT DEFAULT 'general',
   p_notes TEXT DEFAULT NULL,
-  p_splits JSONB
-)
+BEGIN
+  -- Get current user
+  v_user_id := auth.uid();
+
+  -- Guard tolerance (allow 0 to 0.05 by default; adjust if needed)
+  IF p_split_tolerance < 0 OR p_split_tolerance > 0.05 THEN
+    RAISE EXCEPTION 'Invalid p_split_tolerance (must be between 0 and 0.05). Got: %', p_split_tolerance;
+  END IF;
+
+  -- ...rest of your function logic...
+END;)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -38,8 +48,8 @@ BEGIN
   END LOOP;
 
   -- Verify split amounts add up to expense amount (allow small rounding differences)
-  IF ABS(v_total_split_amount - p_amount) > 0.01 THEN
-    RAISE EXCEPTION 'Split amounts must equal expense amount. Expected: %, Got: %', p_amount, v_total_split_amount;
+  IF ABS(v_total_split_amount - p_amount) > p_split_tolerance THEN
+    RAISE EXCEPTION 'Split amounts must equal expense amount (tolerance: %). Expected: %, Got: %', p_split_tolerance, p_amount, v_total_split_amount;
   END IF;
 
   -- Create expense

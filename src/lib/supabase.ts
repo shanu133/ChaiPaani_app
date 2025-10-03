@@ -14,6 +14,7 @@ export interface Database {
           id: string
           email: string
           full_name: string | null
+          display_name: string | null // Ensure this field exists in your Supabase 'profiles' table schema
           avatar_url: string | null
           phone: string | null
           created_at: string
@@ -23,6 +24,7 @@ export interface Database {
           id?: string
           email: string
           full_name?: string | null
+          display_name?: string | null
           avatar_url?: string | null
           phone?: string | null
           created_at?: string
@@ -32,6 +34,7 @@ export interface Database {
           id?: string
           email?: string
           full_name?: string | null
+          display_name?: string | null
           avatar_url?: string | null
           phone?: string | null
           created_at?: string
@@ -193,6 +196,73 @@ export interface Database {
           amount?: number
           description?: string | null
           settled_at?: string
+        }
+      }
+      invitations: {
+        Row: {
+          id: string
+          group_id: string
+          inviter_id: string
+          invitee_email: string
+          status: string
+          token: string
+          created_at: string
+          accepted_at: string | null
+          expires_at: string | null
+        }
+        Insert: {
+          id?: string
+          group_id: string
+          inviter_id: string
+          invitee_email: string
+          status?: string
+          token?: string
+          created_at?: string
+          accepted_at?: string | null
+          expires_at?: string | null
+        }
+        Update: {
+          id?: string
+          group_id?: string
+          inviter_id?: string
+          invitee_email?: string
+          status?: string
+          token?: string
+          created_at?: string
+          accepted_at?: string | null
+          expires_at?: string | null
+        }
+      }
+      notifications: {
+        Row: {
+          id: string
+          user_id: string
+          type: string
+          title: string
+          message: string
+          is_read: boolean
+          created_at: string
+          metadata: any
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          type: string
+          title: string
+          message: string
+          is_read?: boolean
+          created_at?: string
+          metadata?: any
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          type?: string
+          title?: string
+          message?: string
+          is_read?: boolean
+          created_at?: string
+          metadata?: any
         }
       }
     }

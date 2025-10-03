@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -19,7 +19,9 @@ import {
   Loader2
 } from "lucide-react";
 import { expenseService } from "../lib/supabase-service";
-import { toast } from "sonner@2.0.3";
+
+// Shared floating-point comparison tolerance for split validation
+const FLOAT_TOLERANCE = 0.01;
 
 interface GroupMember {
   id: string;
@@ -42,13 +44,36 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
     amount: "",
     category: "",
     notes: "",
-    payerId: currentUser.id,
+    payerId: currentUser?.id || "",
     splitMethod: "equally" as "equally" | "custom",
-    selectedMembers: new Set([currentUser.id]),
+    selectedMembers: new Set(currentUser?.id ? [currentUser.id] : []),
     customAmounts: {} as Record<string, string>
   });
 
   const [isLoading, setIsLoading] = useState(false);
+
+  // Update form data when currentUser or groupMembers change
+  useEffect(() => {
+    if (currentUser?.id && groupMembers.length > 0) {
+      // Find the first member that's not the current user
+      const otherMember = groupMembers.find(member => member.id !== currentUser.id);
+
+      if (otherMember) {
+        setFormData(prev => ({
+          ...prev,
+          payerId: currentUser.id,
+          selectedMembers: new Set([currentUser.id, otherMember.id])
+        }));
+      } else {
+        // Fallback if no other member exists
+        setFormData(prev => ({
+          ...prev,
+          payerId: currentUser.id,
+          selectedMembers: new Set([currentUser.id])
+        }));
+      }
+    }
+  }, [currentUser?.id, groupMembers]);
 
   const categories = [
     { value: "food", label: "🍽️ Food & Dining", color: "bg-orange-100 text-orange-800" },
@@ -61,8 +86,19 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
   ];
 
   const handleMemberToggle = (memberId: string) => {
+    // For 2-person groups, don't allow deselection of the required members
+    // Only allow toggling if there are more than 2 members in the group
+    if (groupMembers.length <= 2) {
+      return; // Don't allow changes for 2-person groups
+    }
+
     const newSelected = new Set(formData.selectedMembers);
     if (newSelected.has(memberId)) {
+      // Don't allow deselecting the current user or the first other member
+      if (memberId === currentUser?.id) return;
+      const otherMember = groupMembers.find(member => member.id !== currentUser?.id);
+      if (memberId === otherMember?.id) return;
+
       newSelected.delete(memberId);
     } else {
       newSelected.add(memberId);
@@ -75,14 +111,14 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
 
     // Validate form
     if (!formData.description.trim() || !formData.amount || formData.selectedMembers.size === 0) {
-      toast.error("Please fill in all required fields");
+      console.error("Please fill in all required fields");
       return;
     }
 
     // Validate amount
     const totalAmount = parseFloat(formData.amount);
     if (isNaN(totalAmount) || totalAmount <= 0) {
-      toast.error("Please enter a valid amount");
+      console.error("Please enter a valid amount");
       return;
     }
 
@@ -110,8 +146,8 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
       });
 
       // Validate custom splits add up to total
-      if (Math.abs(totalSplitAmount - totalAmount) > 0.01) {
-        toast.error("Custom split amounts must equal the total expense amount");
+      if (Math.abs(totalSplitAmount - totalAmount) > FLOAT_TOLERANCE) {
+        console.error("Custom split amounts must equal the total expense amount");
         return;
       }
     }
@@ -130,11 +166,11 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
 
       if (error) {
         console.error("Error creating expense:", error);
-        toast.error(error.message || "Failed to create expense");
+        console.error(error.message || "Failed to create expense");
         return;
       }
 
-      toast.success("Expense created successfully!");
+      console.log("Expense created successfully!");
 
       // Reset form
       setFormData({
@@ -142,9 +178,9 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
         amount: "",
         category: "",
         notes: "",
-        payerId: currentUser.id,
+        payerId: currentUser?.id || "",
         splitMethod: "equally",
-        selectedMembers: new Set([currentUser.id]),
+        selectedMembers: new Set(currentUser?.id ? [currentUser.id] : []),
         customAmounts: {}
       });
 
@@ -154,7 +190,7 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
       onClose();
     } catch (error) {
       console.error("Unexpected error:", error);
-      toast.error("An unexpected error occurred");
+      console.error("An unexpected error occurred");
     } finally {
       setIsLoading(false);
     }
@@ -305,7 +341,49 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
               </div>
               
               <div className="space-y-2">
-                {groupMembers.map((member) => (
+                {/* Show only current user and one other member for 2-person splits */}
+                {[currentUser, groupMembers.find(member => member.id !== currentUser?.id)].filter(Boolean).map((member) => (
+                  <div key={member!.id} className="flex items-center justify-between p-3 rounded-lg border">
+                    <div className="flex items-center gap-3">
+                      <Checkbox
+                        checked={formData.selectedMembers.has(member!.id)}
+                        onCheckedChange={() => handleMemberToggle(member!.id)}
+                        disabled={groupMembers.length <= 2} // Disable checkboxes for 2-person groups
+                      />
+                      <Avatar className="w-8 h-8">
+                        <AvatarFallback>{member!.avatar}</AvatarFallback>
+                      </Avatar>
+                      <span className="font-medium">{member!.name}</span>
+                    </div>
+
+                    {formData.splitMethod === "equally" && formData.selectedMembers.has(member!.id) && (
+                      <span className="text-sm text-muted-foreground">
+                        ₹{splitAmount.toFixed(2)}
+                      </span>
+                    )}
+
+                    {formData.splitMethod === "custom" && formData.selectedMembers.has(member!.id) && (
+                      <div className="w-24">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={formData.customAmounts[member!.id] || ""}
+                          onChange={(e) => setFormData({
+                            ...formData,
+                            customAmounts: {
+                              ...formData.customAmounts,
+                              [member!.id]: e.target.value
+                            }
+                          })}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Show additional members if there are more than 2 in the group */}
+                {groupMembers.length > 2 && groupMembers.slice(2).map((member) => (
                   <div key={member.id} className="flex items-center justify-between p-3 rounded-lg border">
                     <div className="flex items-center gap-3">
                       <Checkbox
@@ -317,13 +395,13 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
                       </Avatar>
                       <span className="font-medium">{member.name}</span>
                     </div>
-                    
+
                     {formData.splitMethod === "equally" && formData.selectedMembers.has(member.id) && (
                       <span className="text-sm text-muted-foreground">
                         ₹{splitAmount.toFixed(2)}
                       </span>
                     )}
-                    
+
                     {formData.splitMethod === "custom" && formData.selectedMembers.has(member.id) && (
                       <div className="w-24">
                         <Input
@@ -332,7 +410,7 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
                           placeholder="0.00"
                           value={formData.customAmounts[member.id] || ""}
                           onChange={(e) => setFormData({
-                            ...formData, 
+                            ...formData,
                             customAmounts: {
                               ...formData.customAmounts,
                               [member.id]: e.target.value

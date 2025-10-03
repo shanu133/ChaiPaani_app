@@ -1,13 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import ChaiPaaniLogo from "figma:asset/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
-import ChaiPaaniLogoFull from "figma:asset/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
-import { 
+import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
+import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
+import { notificationService, invitationService } from "../lib/supabase-service";
+import {
   ArrowLeft,
   Bell,
   Check,
@@ -22,8 +23,10 @@ import {
   Trash2,
   MoreVertical,
   Filter,
-  Mail
+  Mail,
+  Loader2
 } from "lucide-react";
+import { toast } from "sonner";
 
 interface NotificationsPageProps {
   onBack: () => void;
@@ -35,8 +38,9 @@ interface Notification {
   type: 'expense_added' | 'payment_received' | 'payment_reminder' | 'group_invitation' | 'settlement_request' | 'group_update';
   title: string;
   message: string;
-  isRead: boolean;
-  timestamp: Date;
+  is_read: boolean;
+  created_at: string;
+  metadata?: any;
   data?: {
     amount?: number;
     groupName?: string;
@@ -46,94 +50,6 @@ interface Notification {
   };
 }
 
-// Mock notification data
-const mockNotifications: Notification[] = [
-  {
-    id: '1',
-    type: 'expense_added',
-    title: 'New Expense Added',
-    message: 'Rahul added "Dinner at Pizza Hut" for ₹1,200. You owe ₹300.',
-    isRead: false,
-    timestamp: new Date(Date.now() - 2 * 60 * 1000), // 2 minutes ago
-    data: {
-      amount: 300,
-      groupName: 'Goa Trip 2024',
-      payerName: 'Rahul',
-      expenseTitle: 'Dinner at Pizza Hut',
-      avatar: 'R'
-    }
-  },
-  {
-    id: '2',
-    type: 'payment_received',
-    title: 'Payment Received',
-    message: 'Priya paid you ₹450 for "Uber rides"',
-    isRead: false,
-    timestamp: new Date(Date.now() - 15 * 60 * 1000), // 15 minutes ago
-    data: {
-      amount: 450,
-      groupName: 'Office Lunch Group',
-      payerName: 'Priya',
-      expenseTitle: 'Uber rides',
-      avatar: 'P'
-    }
-  },
-  {
-    id: '3',
-    type: 'group_invitation',
-    title: 'Group Invitation',
-    message: 'Amit invited you to join "Weekend Movie Gang"',
-    isRead: false,
-    timestamp: new Date(Date.now() - 30 * 60 * 1000), // 30 minutes ago
-    data: {
-      groupName: 'Weekend Movie Gang',
-      payerName: 'Amit',
-      avatar: 'A'
-    }
-  },
-  {
-    id: '4',
-    type: 'payment_reminder',
-    title: 'Payment Reminder',
-    message: 'You owe Neha ₹250 for "Coffee meetup". Due 2 days ago.',
-    isRead: true,
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
-    data: {
-      amount: 250,
-      groupName: 'Friends Circle',
-      payerName: 'Neha',
-      expenseTitle: 'Coffee meetup',
-      avatar: 'N'
-    }
-  },
-  {
-    id: '5',
-    type: 'settlement_request',
-    title: 'Settlement Request',
-    message: 'Karan wants to settle up. You owe ₹1,125 total.',
-    isRead: true,
-    timestamp: new Date(Date.now() - 4 * 60 * 60 * 1000), // 4 hours ago
-    data: {
-      amount: 1125,
-      groupName: 'Goa Trip 2024',
-      payerName: 'Karan',
-      avatar: 'K'
-    }
-  },
-  {
-    id: '6',
-    type: 'group_update',
-    title: 'Group Updated',
-    message: 'Pooja updated group details for "Office Lunch Group"',
-    isRead: true,
-    timestamp: new Date(Date.now() - 6 * 60 * 60 * 1000), // 6 hours ago
-    data: {
-      groupName: 'Office Lunch Group',
-      payerName: 'Pooja',
-      avatar: 'P'
-    }
-  }
-];
 
 const getNotificationIcon = (type: Notification['type']) => {
   switch (type) {
@@ -171,28 +87,94 @@ const formatTimestamp = (timestamp: Date) => {
 };
 
 export function NotificationsPage({ onBack, onLogoClick }: NotificationsPageProps) {
-  const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [activeTab, setActiveTab] = useState<'all' | 'unread'>('all');
+  const [loading, setLoading] = useState(true);
 
-  const unreadCount = notifications.filter(n => !n.isRead).length;
-  const displayNotifications = activeTab === 'unread' 
-    ? notifications.filter(n => !n.isRead)
-    : notifications;
+  // Fetch real notifications on component mount
+  useEffect(() => {
+    fetchNotifications();
+  }, []);
 
-  const markAsRead = (notificationId: string) => {
-    setNotifications(prev => 
-      prev.map(n => 
-        n.id === notificationId ? { ...n, isRead: true } : n
-      )
-    );
+  const fetchNotifications = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await notificationService.getNotifications();
+
+      if (error) {
+        console.error("Error fetching notifications:", error);
+        toast.error("Failed to load notifications");
+        return;
+      }
+
+      if (data) {
+        // Transform Supabase data to match our interface
+        const transformedNotifications: Notification[] = data.map((notification: any) => ({
+          id: notification.id,
+          type: notification.type as Notification['type'],
+          title: notification.title,
+          message: notification.message,
+          is_read: notification.is_read,
+          created_at: notification.created_at,
+          metadata: notification.metadata,
+          data: notification.metadata ? JSON.parse(notification.metadata) : undefined
+        }));
+
+        setNotifications(transformedNotifications);
+      }
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+      toast.error("Failed to load notifications");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const markAsUnread = (notificationId: string) => {
-    setNotifications(prev => 
-      prev.map(n => 
-        n.id === notificationId ? { ...n, isRead: false } : n
-      )
-    );
+  const unreadCount = notifications.filter(n => !n.is_read).length;
+  const displayNotifications = activeTab === 'unread'
+    ? notifications.filter(n => !n.is_read)
+    : notifications;
+
+  const markAsRead = async (notificationId: string) => {
+    try {
+      const { error } = await notificationService.markRead(notificationId, true);
+      if (error) {
+        console.error("Error marking notification as read:", error);
+        toast.error("Failed to mark as read");
+        return;
+      }
+
+      setNotifications(prev =>
+        prev.map(n =>
+          n.id === notificationId ? { ...n, is_read: true } : n
+        )
+      );
+      toast.success("Marked as read");
+    } catch (error) {
+      console.error("Error marking notification as read:", error);
+      toast.error("Failed to mark as read");
+    }
+  };
+
+  const markAsUnread = async (notificationId: string) => {
+    try {
+      const { error } = await notificationService.markRead(notificationId, false);
+      if (error) {
+        console.error("Error marking notification as unread:", error);
+        toast.error("Failed to mark as unread");
+        return;
+      }
+
+      setNotifications(prev =>
+        prev.map(n =>
+          n.id === notificationId ? { ...n, is_read: false } : n
+        )
+      );
+      toast.success("Marked as unread");
+    } catch (error) {
+      console.error("Error marking notification as unread:", error);
+      toast.error("Failed to mark as unread");
+    }
   };
 
   const deleteNotification = (notificationId: string) => {
@@ -278,7 +260,7 @@ export function NotificationsPage({ onBack, onLogoClick }: NotificationsPageProp
       <main className="max-w-4xl mx-auto p-4 md:p-6">
         <Card>
           <CardHeader>
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'all' | 'unread')}>
+            <Tabs value={activeTab} onValueChange={(value: string) => setActiveTab(value as 'all' | 'unread')}>
               <TabsList>
                 <TabsTrigger value="all">
                   All ({notifications.length})
@@ -291,7 +273,24 @@ export function NotificationsPage({ onBack, onLogoClick }: NotificationsPageProp
           </CardHeader>
           
           <CardContent className="p-0">
-            {displayNotifications.length === 0 ? (
+            {loading ? (
+              // Loading skeleton
+              <div className="p-4 space-y-4">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div key={index} className="flex items-start gap-3 p-4">
+                    <div className="w-10 h-10 bg-muted rounded-full animate-pulse" />
+                    <div className="flex-1 space-y-2">
+                      <div className="flex justify-between">
+                        <div className="h-4 bg-muted rounded w-32 animate-pulse" />
+                        <div className="h-3 bg-muted rounded w-16 animate-pulse" />
+                      </div>
+                      <div className="h-4 bg-muted rounded w-full animate-pulse" />
+                      <div className="h-3 bg-muted rounded w-3/4 animate-pulse" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : displayNotifications.length === 0 ? (
               <div className="p-8 text-center">
                 <Bell className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-lg font-medium mb-2">
@@ -310,7 +309,7 @@ export function NotificationsPage({ onBack, onLogoClick }: NotificationsPageProp
                   <div
                     key={notification.id}
                     className={`p-4 hover:bg-muted/50 transition-colors ${
-                      !notification.isRead ? 'bg-blue-50/50 border-l-4 border-l-primary' : ''
+                      !notification.is_read ? 'bg-blue-50/50 border-l-4 border-l-primary' : ''
                     }`}
                   >
                     <div className="flex items-start gap-3">
@@ -329,12 +328,12 @@ export function NotificationsPage({ onBack, onLogoClick }: NotificationsPageProp
                             <h4 className="font-medium text-sm">
                               {notification.title}
                             </h4>
-                            {!notification.isRead && (
+                            {!notification.is_read && (
                               <div className="w-2 h-2 rounded-full bg-primary" />
                             )}
                           </div>
                           <span className="text-xs text-muted-foreground whitespace-nowrap">
-                            {formatTimestamp(notification.timestamp)}
+                            {formatTimestamp(new Date(notification.created_at))}
                           </span>
                         </div>
                         
@@ -383,7 +382,7 @@ export function NotificationsPage({ onBack, onLogoClick }: NotificationsPageProp
                           
                           <div className="flex-1" />
                           
-                          {notification.isRead ? (
+                          {notification.is_read ? (
                             <Button
                               variant="ghost"
                               size="sm"

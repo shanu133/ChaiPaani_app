@@ -1,326 +1,206 @@
-import { useState } from "react";
-import { Button } from "./ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
-import { Calendar } from "./ui/calendar";
-import { Badge } from "./ui/badge";
-import { Separator } from "./ui/separator";
-import { 
-  Calendar as CalendarIcon, 
-  X, 
-  Check,
-  ChevronLeft,
-  ChevronRight
-} from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import React, { useState } from 'react';
+import { Button } from './ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
+import { Calendar } from '@/lib/Calendar';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Badge } from './ui/badge';
+import { toast } from 'sonner';
+import { ArrowRight, Calendar as CalendarIcon, ChevronDown, Filter } from 'lucide-react';
 
 interface DateFilterModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApplyFilter: (filter: DateFilter) => void;
-  currentFilter?: DateFilter;
+  onApply: (filters: { startDate: string | null; endDate: string | null; preset: string }) => void;
+  selectedPreset?: string;
+  selectedStartDate?: string | null;
+  selectedEndDate?: string | null;
 }
 
-export interface DateFilter {
-  type: 'all' | 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'this_year' | 'custom';
-  startDate?: Date;
-  endDate?: Date;
-  label: string;
-}
+export const DateFilterModal: React.FC<DateFilterModalProps> = ({
+  isOpen,
+  onClose,
+  onApply,
+  selectedPreset = 'custom',
+  selectedStartDate = null,
+  selectedEndDate = null,
+}) => {
+  const [preset, setPreset] = useState(selectedPreset);
+  const [startDate, setStartDate] = useState(selectedStartDate);
+  const [endDate, setEndDate] = useState(selectedEndDate);
 
-export function DateFilterModal({ isOpen, onClose, onApplyFilter, currentFilter }: DateFilterModalProps) {
-  const [selectedFilter, setSelectedFilter] = useState<DateFilter>(
-    currentFilter || { type: 'all', label: 'All Time' }
-  );
-  const [customStartDate, setCustomStartDate] = useState<Date>();
-  const [customEndDate, setCustomEndDate] = useState<Date>();
-  const [showStartCalendar, setShowStartCalendar] = useState(false);
-  const [showEndCalendar, setShowEndCalendar] = useState(false);
-
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-
-  const thisWeekStart = new Date(today);
-  thisWeekStart.setDate(today.getDate() - today.getDay());
-  const thisWeekEnd = new Date(thisWeekStart);
-  thisWeekEnd.setDate(thisWeekStart.getDate() + 6);
-
-  const lastWeekStart = new Date(thisWeekStart);
-  lastWeekStart.setDate(thisWeekStart.getDate() - 7);
-  const lastWeekEnd = new Date(lastWeekStart);
-  lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
-
-  const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  const thisMonthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-
-  const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-  const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
-
-  const thisYearStart = new Date(today.getFullYear(), 0, 1);
-  const thisYearEnd = new Date(today.getFullYear(), 11, 31);
-
-  const predefinedFilters: DateFilter[] = [
-    { type: 'all', label: 'All Time' },
-    { type: 'today', label: 'Today', startDate: today, endDate: today },
-    { type: 'yesterday', label: 'Yesterday', startDate: yesterday, endDate: yesterday },
-    { type: 'this_week', label: 'This Week', startDate: thisWeekStart, endDate: thisWeekEnd },
-    { type: 'last_week', label: 'Last Week', startDate: lastWeekStart, endDate: lastWeekEnd },
-    { type: 'this_month', label: 'This Month', startDate: thisMonthStart, endDate: thisMonthEnd },
-    { type: 'last_month', label: 'Last Month', startDate: lastMonthStart, endDate: lastMonthEnd },
-    { type: 'this_year', label: 'This Year', startDate: thisYearStart, endDate: thisYearEnd },
-  ];
-
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric'
-    });
-  };
-
-  const handlePredefinedFilter = (filter: DateFilter) => {
-    setSelectedFilter(filter);
-    setCustomStartDate(undefined);
-    setCustomEndDate(undefined);
-    setShowStartCalendar(false);
-    setShowEndCalendar(false);
-  };
-
-  const handleCustomFilter = () => {
-    if (!customStartDate) {
-      toast.error("Please select a start date");
-      return;
+  // Handle preset selection and automatic date range calculation
+  const handlePresetChange = (newPreset: string) => {
+    setPreset(newPreset);
+    const today = new Date();
+    const start = new Date();
+    
+    switch (newPreset) {
+      case 'today':
+        setStartDate(today.toISOString().split('T')[0]);
+        setEndDate(today.toISOString().split('T')[0]);
+        break;
+      case 'yesterday':
+        start.setDate(today.getDate() - 1);
+        setStartDate(start.toISOString().split('T')[0]);
+        setEndDate(start.toISOString().split('T')[0]);
+        break;
+      case 'thisWeek':
+        const day = today.getDay() || 7; // Convert Sunday (0) to 7
+        start.setDate(today.getDate() - (day - 1)); // Go to Monday
+        setStartDate(start.toISOString().split('T')[0]);
+        setEndDate(today.toISOString().split('T')[0]);
+        break;
+      case 'lastWeek':
+        const lastWeekMonday = new Date(today);
+        lastWeekMonday.setDate(today.getDate() - 7 - (today.getDay() - 1));
+        const lastWeekSunday = new Date(lastWeekMonday);
+        lastWeekSunday.setDate(lastWeekMonday.getDate() + 6);
+        setStartDate(lastWeekMonday.toISOString().split('T')[0]);
+        setEndDate(lastWeekSunday.toISOString().split('T')[0]);
+        break;
+      case 'thisMonth':
+        start.setDate(1);
+        setStartDate(start.toISOString().split('T')[0]);
+        setEndDate(today.toISOString().split('T')[0]);
+        break;
+      case 'lastMonth':
+        start.setMonth(today.getMonth() - 1);
+        start.setDate(1);
+        const lastDayOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+        setStartDate(start.toISOString().split('T')[0]);
+        setEndDate(lastDayOfLastMonth.toISOString().split('T')[0]);
+        break;
+      case 'thisYear':
+        start.setMonth(0);
+        start.setDate(1);
+        setStartDate(start.toISOString().split('T')[0]);
+        setEndDate(today.toISOString().split('T')[0]);
+        break;
+      case 'custom':
+      default:
+        // Leave dates as they are for custom
+        break;
     }
-
-    if (!customEndDate) {
-      toast.error("Please select an end date");
-      return;
-    }
-
-    if (customStartDate > customEndDate) {
-      toast.error("Start date cannot be after end date");
-      return;
-    }
-
-    const customFilter: DateFilter = {
-      type: 'custom',
-      label: `${formatDate(customStartDate)} - ${formatDate(customEndDate)}`,
-      startDate: customStartDate,
-      endDate: customEndDate
-    };
-
-    setSelectedFilter(customFilter);
   };
 
   const handleApply = () => {
-    if (selectedFilter.type === 'custom' && (!customStartDate || !customEndDate)) {
-      toast.error("Please complete the custom date selection");
-      return;
+    // Validate dates if preset is custom
+    if (preset === 'custom') {
+      if (!startDate || !endDate) {
+        toast.error('Please select both start and end dates for custom range');
+        return;
+      }
+      
+      if (new Date(startDate) > new Date(endDate)) {
+        toast.error('Start date cannot be after end date');
+        return;
+      }
     }
-
-    const filterToApply = selectedFilter.type === 'custom' 
-      ? {
-          ...selectedFilter,
-          startDate: customStartDate,
-          endDate: customEndDate,
-          label: `${formatDate(customStartDate!)} - ${formatDate(customEndDate!)}`
-        }
-      : selectedFilter;
-
-    onApplyFilter(filterToApply);
-    toast.success(`Filter applied: ${filterToApply.label}`);
+    
+    onApply({ startDate, endDate, preset });
+    toast.success('Date filter applied');
     onClose();
   };
 
-  const handleClearFilter = () => {
-    const allTimeFilter = { type: 'all' as const, label: 'All Time' };
-    setSelectedFilter(allTimeFilter);
-    setCustomStartDate(undefined);
-    setCustomEndDate(undefined);
-    onApplyFilter(allTimeFilter);
-    toast.success("Filter cleared");
-    onClose();
-  };
-
-  const isFilterActive = (filter: DateFilter) => {
-    return selectedFilter.type === filter.type;
+  const handleReset = () => {
+    setPreset('custom');
+    setStartDate(null);
+    setEndDate(null);
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <CalendarIcon className="w-5 h-5 text-primary" />
+            <Filter className="h-5 w-5" />
             Filter by Date
           </DialogTitle>
           <DialogDescription>
-            Filter expenses and activities by selecting a date range or using quick filters.
+            Select a date range to filter expenses and transactions
           </DialogDescription>
         </DialogHeader>
-
-        <div className="space-y-6 pt-4">
-          {/* Current Filter */}
-          {currentFilter && currentFilter.type !== 'all' && (
-            <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Current Filter</p>
-                  <p className="font-medium">{currentFilter.label}</p>
+        
+        <div className="grid gap-4 py-4">
+          {/* Preset Selector */}
+          <div className="space-y-2">
+            <Label htmlFor="date-preset">Quick Presets</Label>
+            <Select value={preset} onValueChange={handlePresetChange}>
+              <SelectTrigger id="date-preset">
+                <SelectValue placeholder="Select a preset" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="today">Today</SelectItem>
+                <SelectItem value="yesterday">Yesterday</SelectItem>
+                <SelectItem value="thisWeek">This Week</SelectItem>
+                <SelectItem value="lastWeek">Last Week</SelectItem>
+                <SelectItem value="thisMonth">This Month</SelectItem>
+                <SelectItem value="lastMonth">Last Month</SelectItem>
+                <SelectItem value="thisYear">This Year</SelectItem>
+                <SelectItem value="custom">Custom Range</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          
+          {/* Custom Date Range */}
+          {(preset === 'custom' || true) && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="start-date">Start Date</Label>
+                  <div className="relative">
+                    <CalendarIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="start-date"
+                      type="date"
+                      value={startDate || ''}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
                 </div>
-                <Badge variant="secondary">Active</Badge>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="end-date">End Date</Label>
+                  <div className="relative">
+                    <CalendarIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="end-date"
+                      type="date"
+                      value={endDate || ''}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                </div>
               </div>
+              
+              {/* Date Range Preview */}
+              {startDate && endDate && (
+                <div className="p-3 bg-muted/50 rounded-lg flex items-center justify-between">
+                  <span className="text-sm">Selected Range:</span>
+                  <Badge variant="outline">
+                    {new Date(startDate).toLocaleDateString()} 
+                    <ArrowRight className="inline h-3 w-3 mx-1" />
+                    {new Date(endDate).toLocaleDateString()}
+                  </Badge>
+                </div>
+              )}
             </div>
           )}
-
-          {/* Predefined Filters */}
-          <div className="space-y-3">
-            <h4 className="font-medium text-sm">Quick Filters</h4>
-            <div className="grid grid-cols-2 gap-2">
-              {predefinedFilters.map((filter) => (
-                <Button
-                  key={filter.type}
-                  variant={isFilterActive(filter) ? "default" : "outline"}
-                  size="sm"
-                  className="justify-start text-left h-auto py-3"
-                  onClick={() => handlePredefinedFilter(filter)}
-                >
-                  <div className="flex items-center gap-2 w-full">
-                    {isFilterActive(filter) && <Check className="w-4 h-4" />}
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm">{filter.label}</p>
-                      {filter.startDate && filter.endDate && (
-                        <p className="text-xs opacity-70 truncate">
-                          {filter.startDate.toDateString() === filter.endDate.toDateString() 
-                            ? formatDate(filter.startDate)
-                            : `${formatDate(filter.startDate)} - ${formatDate(filter.endDate)}`
-                          }
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          <Separator />
-
-          {/* Custom Date Range */}
-          <div className="space-y-4">
-            <h4 className="font-medium text-sm">Custom Date Range</h4>
-            
-            <div className="grid grid-cols-2 gap-3">
-              {/* Start Date */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Start Date</label>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start text-left h-auto py-2"
-                  onClick={() => {
-                    setShowStartCalendar(!showStartCalendar);
-                    setShowEndCalendar(false);
-                  }}
-                >
-                  <CalendarIcon className="w-4 h-4 mr-2" />
-                  {customStartDate ? formatDate(customStartDate) : "Select start date"}
-                </Button>
-                
-                {showStartCalendar && (
-                  <div className="border rounded-lg p-3 bg-background">
-                    <Calendar
-                      mode="single"
-                      selected={customStartDate}
-                      onSelect={(date) => {
-                        setCustomStartDate(date);
-                        setShowStartCalendar(false);
-                        if (date && customEndDate) {
-                          handleCustomFilter();
-                        }
-                      }}
-                      disabled={(date) => date > today}
-                      className="rounded-md"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* End Date */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">End Date</label>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start text-left h-auto py-2"
-                  onClick={() => {
-                    setShowEndCalendar(!showEndCalendar);
-                    setShowStartCalendar(false);
-                  }}
-                >
-                  <CalendarIcon className="w-4 h-4 mr-2" />
-                  {customEndDate ? formatDate(customEndDate) : "Select end date"}
-                </Button>
-                
-                {showEndCalendar && (
-                  <div className="border rounded-lg p-3 bg-background">
-                    <Calendar
-                      mode="single"
-                      selected={customEndDate}
-                      onSelect={(date) => {
-                        setCustomEndDate(date);
-                        setShowEndCalendar(false);
-                        if (date && customStartDate) {
-                          handleCustomFilter();
-                        }
-                      }}
-                      disabled={(date) => date > today || (customStartDate && date < customStartDate)}
-                      className="rounded-md"
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {customStartDate && customEndDate && (
-              <Button
-                variant={selectedFilter.type === 'custom' ? "default" : "outline"}
-                size="sm"
-                className="w-full"
-                onClick={handleCustomFilter}
-              >
-                {selectedFilter.type === 'custom' && <Check className="w-4 h-4 mr-2" />}
-                Apply Custom Range: {formatDate(customStartDate)} - {formatDate(customEndDate)}
-              </Button>
-            )}
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row gap-3 pt-4">
-            <Button 
-              variant="outline" 
-              onClick={onClose}
-              className="sm:flex-1"
-            >
-              Cancel
-            </Button>
-            {(currentFilter && currentFilter.type !== 'all') && (
-              <Button 
-                variant="ghost" 
-                onClick={handleClearFilter}
-                className="sm:flex-1"
-              >
-                Clear Filter
-              </Button>
-            )}
-            <Button 
-              onClick={handleApply}
-              disabled={selectedFilter.type === 'custom' && (!customStartDate || !customEndDate)}
-              className="sm:flex-1"
-            >
-              Apply Filter
-            </Button>
-          </div>
+        </div>
+        
+        <div className="flex gap-3 pt-2">
+          <Button variant="outline" onClick={handleReset}>
+            Reset
+          </Button>
+          <Button variant="default" onClick={handleApply} className="ml-auto">
+            Apply Filters
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
   );
-}
+};
