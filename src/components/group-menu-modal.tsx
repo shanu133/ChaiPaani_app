@@ -162,7 +162,7 @@ export const GroupMenuModal: React.FC<GroupMenuModalProps> = ({
           name: groupName
         }}
         onMembersAdded={() => {
-          setShowAddMembers(false);
+          // Keep the modal open so the shareable invite link remains visible
           onGroupUpdate?.(); // Refresh the group data
         }}
       />

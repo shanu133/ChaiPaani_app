@@ -53,6 +53,8 @@ export function Dashboard({
   const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
   const [isSettleUpModalOpen, setIsSettleUpModalOpen] = useState(false);
   const [isScanReceiptModalOpen, setIsScanReceiptModalOpen] = useState(false);
+  const [modalGroupMembers, setModalGroupMembers] = useState<{ id: string; name: string; avatar: string }[]>([]);
+  const [modalGroupId, setModalGroupId] = useState<string | null>(null);
 
   // Real data state
   interface BalanceItem {
@@ -128,6 +130,29 @@ if (balances.length > 0) {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  // Helper to open Add Expense for a specific group, fetching members via RPC
+  const openAddExpenseForGroup = async (gid: string) => {
+    try {
+      setModalGroupId(gid);
+      setModalGroupMembers([]);
+      const { data, error } = await groupService.getGroupMembersWithStatus(gid);
+      if (!error && Array.isArray(data)) {
+        const actives = data
+          .filter((m: any) => m.status === 'active')
+          .map((m: any) => ({
+            id: m.user_id,
+            name: m.display_name,
+            avatar: (m.display_name || 'UN').substring(0, 2).toUpperCase()
+          }));
+        setModalGroupMembers(actives);
+      }
+    } catch (e) {
+      console.warn('Could not fetch members for Add Expense modal:', e);
+    } finally {
+      setIsAddExpenseModalOpen(true);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -214,7 +239,13 @@ if (balances.length > 0) {
           <div className="p-4 border-t">
             <Button
               className="w-full gap-2"
-              onClick={() => setIsAddExpenseModalOpen(true)}
+              onClick={() => {
+                if (groups.length > 0) {
+                  openAddExpenseForGroup(groups[0].id);
+                } else {
+                  console.error('No groups available. Create a group first.');
+                }
+              }}
             >
               <Plus className="w-4 h-4" />
               Add Expense
@@ -481,10 +512,19 @@ if (balances.length > 0) {
                         </p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <Badge variant="secondary">
-                        Active
-                      </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary">Active</Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openAddExpenseForGroup(group.id);
+                        }}
+                      >
+                        <Plus className="w-4 h-4 mr-1" />
+                        Add Expense
+                      </Button>
                     </div>
                   </div>
                 )) : (
@@ -510,7 +550,13 @@ if (balances.length > 0) {
                 <Button
                   variant="outline"
                   className="h-16 md:h-20 flex-col gap-1 md:gap-2 text-xs md:text-sm"
-                  onClick={() => setIsAddExpenseModalOpen(true)}
+                  onClick={() => {
+                    if (groups.length > 0) {
+                      openAddExpenseForGroup(groups[0].id);
+                    } else {
+                      console.error('No groups available. Create a group first.');
+                    }
+                  }}
                 >
                   <Plus className="w-5 h-5 md:w-6 md:h-6" />
                   Add Expense
@@ -551,17 +597,13 @@ if (balances.length > 0) {
       <AddExpenseModal
         isOpen={isAddExpenseModalOpen}
         onClose={() => setIsAddExpenseModalOpen(false)}
-        groupMembers={groups.length > 0 ? groups.slice(0, 4).map((group) => ({
-          id: group.id,
-          name: group.name,
-          avatar: group.name.substring(0, 2).toUpperCase()
-        })) : []}
+        groupMembers={modalGroupMembers}
         currentUser={currentUser ? {
           id: currentUser.id,
           name: currentUser.user_metadata?.full_name || "You",
           avatar: (currentUser.user_metadata?.full_name || "You").substring(0, 2).toUpperCase()
         } : { id: "temp", name: "You", avatar: "YO" }}
-        groupId={groups.length > 0 ? groups[0].id : "demo-group"}
+        groupId={modalGroupId || (groups.length > 0 ? groups[0].id : "")}
         onExpenseCreated={() => {
           console.log("Expense created successfully");
           fetchDashboardData(); // Refresh dashboard data
@@ -582,6 +624,8 @@ if (balances.length > 0) {
         onClose={() => setIsSettleUpModalOpen(false)}
         onSettleUp={(settlementData) => {
           console.log("Settlement recorded:", settlementData);
+          // Refresh dashboard data so balances and recent activity reflect the settlement
+          fetchDashboardData();
           setIsSettleUpModalOpen(false);
         }}
       />

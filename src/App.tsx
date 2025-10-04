@@ -8,7 +8,7 @@ const NotificationsPage = lazy(() => import("./components/notifications-page").t
 const ActivityPage = lazy(() => import("./components/activity-page").then(m => ({ default: m.ActivityPage })));
 const SettingsPage = lazy(() => import("./components/settings-page").then(m => ({ default: m.SettingsPage })));
 import { Toaster } from "./components/ui/sonner";
-import { authService } from "./lib/supabase-service";
+import { authService, invitationService } from "./lib/supabase-service";
 
 type AppView = "landing" | "auth" | "dashboard" | "groups" | "group" | "notifications" | "activity" | "settings";
 
@@ -17,11 +17,27 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
+  const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(null);
 
   // Check for existing authentication on app load
   useEffect(() => {
     const checkAuth = async () => {
       try {
+        // Capture invite token from URL on first load
+        const url = new URL(window.location.href);
+        const tokenFromUrl = url.searchParams.get("token");
+        if (tokenFromUrl) {
+          // Persist token until we complete acceptance after login
+          sessionStorage.setItem("invite_token", tokenFromUrl);
+          setPendingInviteToken(tokenFromUrl);
+          // Clean the URL so token isn't kept in history
+          url.searchParams.delete("token");
+          window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+        } else {
+          const saved = sessionStorage.getItem("invite_token");
+          if (saved) setPendingInviteToken(saved);
+        }
+
         const user = await authService.getCurrentUser();
         if (user) {
           setIsAuthenticated(true);
@@ -55,6 +71,49 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+// At the top of the file with your other imports
+import { toast } from "sonner";
+
+  // When authenticated and we have a pending invite token, accept it once
+  useEffect(() => {
+    const acceptIfPending = async () => {
+      if (!isAuthenticated) return;
+      const token = pendingInviteToken || sessionStorage.getItem("invite_token");
+      if (!token) return;
+      try {
+        const { error } = await invitationService.acceptByToken(token);
+        if (error) {
+          console.error("Failed to accept invite token:", error);
+          toast.error((error as any)?.message || "Failed to join group from invitation");
+        } else {
+          toast.success("Joined group successfully");
+        }
+      } catch (e) {
+        try {
+          const error = await acceptInvite();
+          if (error) {
+            console.error("Failed to accept invite token:", error);
+            toast.error((error as any)?.message || "Failed to join group from invitation");
+            // Only clear token on non-retryable errors
+            if ((error as any)?.statusCode === 404 || (error as any)?.statusCode === 410) {
+              sessionStorage.removeItem("invite_token");
+              setPendingInviteToken(null);
+            }
+          } else {
+            toast.success("Joined group successfully");
+            sessionStorage.removeItem("invite_token");
+            setPendingInviteToken(null);
+          }
+        } catch (e) {
+          console.error("Error accepting invite token:", e);
+          toast.error("Unable to accept invitation");
+        }      } finally {
+        sessionStorage.removeItem("invite_token");
+        setPendingInviteToken(null);
+      }
+    };
+    acceptIfPending();
+  }, [isAuthenticated, pendingInviteToken]);
   const handleGetStarted = () => {
     setCurrentView("auth");
   };

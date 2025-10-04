@@ -42,10 +42,8 @@ DROP POLICY IF EXISTS "group_members_creator_manage" ON public.group_members;
 
 CREATE POLICY "group_members_select_policy" ON public.group_members
   FOR SELECT USING (
+    -- Avoid recursion: only allow users to see their own membership rows
     user_id = auth.uid()
-    OR group_id IN (
-      SELECT id FROM public.groups WHERE created_by = auth.uid()
-    )
   );
 
 CREATE POLICY "group_members_insert_self" ON public.group_members
@@ -57,9 +55,27 @@ CREATE POLICY "group_members_update_own" ON public.group_members
 CREATE POLICY "group_members_delete_own" ON public.group_members
   FOR DELETE USING (user_id = auth.uid());
 
--- Allow group creators to manage memberships (compromise; app validates)
-CREATE POLICY "group_members_creator_manage" ON public.group_members
-  FOR ALL USING (
+-- Allow group creators to manage memberships (DML only to avoid SELECT recursion)
+CREATE POLICY "group_members_creator_insert" ON public.group_members
+  FOR INSERT WITH CHECK (
+    group_id IN (
+      SELECT id FROM public.groups WHERE created_by = auth.uid()
+    )
+  );
+
+CREATE POLICY "group_members_creator_update" ON public.group_members
+  FOR UPDATE USING (
+    group_id IN (
+      SELECT id FROM public.groups WHERE created_by = auth.uid()
+    )
+  ) WITH CHECK (
+    group_id IN (
+      SELECT id FROM public.groups WHERE created_by = auth.uid()
+    )
+  );
+
+CREATE POLICY "group_members_creator_delete" ON public.group_members
+  FOR DELETE USING (
     group_id IN (
       SELECT id FROM public.groups WHERE created_by = auth.uid()
     )

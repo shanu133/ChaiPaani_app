@@ -1,11 +1,19 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
-import { Avatar, AvatarFallback } from "./ui/avatar";
-import { Plus, X, Users, Mail } from "lucide-react";
-import { groupService, invitationService } from "../lib/supabase-service";
+import { Plus, Users } from "lucide-react";
+import { invitationService } from "../lib/supabase-service";
+
+// Build a shareable invite link using base from VITE_PUBLIC_APP_URL or current origin.
+// For token security, place the token in the URL fragment instead of a query parameter.
+function buildInviteLink(token?: string | null): string | null {
+  if (!token) return null;
+  const publicBase = (import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined;
+  const base = (publicBase && publicBase.trim().length > 0) ? publicBase.replace(/\/$/, '') : window.location.origin;
+  return `${base}/#token=${encodeURIComponent(token)}`;
+}
 
 interface AddMembersModalProps {
   isOpen: boolean;
@@ -17,25 +25,43 @@ interface AddMembersModalProps {
   onMembersAdded: () => void;
 }
 
-interface Member {
-  id: string;
-  name: string;
-  email: string;
-  avatar: string;
-}
-
 export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddMembersModalProps) {
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberEmail, setNewMemberEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [lastInviteToken, setLastInviteToken] = useState<string | null>(null);
+  const [lastInviteEmail, setLastInviteEmail] = useState<string | null>(null);
+  interface PendingInvitation {
+    id: string;
+    invitee_email: string;
+    created_at: string;
+    token?: string | null;
+    status: string;
+  }
+  const [pendingInvites, setPendingInvites] = useState<Array<{ id: string; email: string; created_at: string; token?: string }>>([]);
 
-  const generateAvatar = (name: string) => {
-    const nameParts = name.trim().split(" ");
-    if (nameParts.length >= 2) {
-      return (nameParts[0][0] + nameParts[1][0]).toUpperCase();
+  const inviteLink = useMemo(() => buildInviteLink(lastInviteToken), [lastInviteToken]);
+
+  // Load existing pending invitations for this group via service (typed)
+  useEffect(() => {
+    const loadPending = async () => {
+      try {
+        if (!group?.id) return;
+        const { data, error } = await invitationService.getPendingInvitations(group.id);
+        if (error) {
+          console.warn('Could not load pending invites (service error):', error);
+          return;
+        }
+        const typed = (data as PendingInvitation[] | null) || [];
+        setPendingInvites(
+          typed.map((i) => ({ id: i.id, email: i.invitee_email, created_at: i.created_at, token: i.token || undefined }))
+        );
+      } catch (e) {
+        console.warn('Could not load pending invites (unexpected):', e)
+      }
     }
-    return name.substring(0, 2).toUpperCase();
-  };
+    loadPending()
+  }, [group?.id, isOpen])
 
   const addMember = async () => {
     if (!newMemberName.trim()) {
@@ -70,7 +96,7 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
       if (inviteError) {
         console.error(`Error inviting ${newMemberEmail}:`, inviteError);
-        alert(`Failed to invite ${newMemberEmail}: ${inviteError.message || 'Unknown error'}`);
+        alert(`Failed to invite ${newMemberEmail}: ${(inviteError as any)?.message || 'Unknown error'}`);
         return;
       }
 
@@ -80,13 +106,16 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
         return;
       }
 
-      console.log(`Invitation sent to ${newMemberEmail}!`);
-      alert(`Invitation sent to ${newMemberEmail}!`);
+  setLastInviteToken(inviteData.token);
+  setLastInviteEmail(newMemberEmail.trim().toLowerCase());
+  console.log(`Invitation sent to ${newMemberEmail}!`);
+  alert(`Invitation created for ${newMemberEmail}`);
 
       setNewMemberName("");
       setNewMemberEmail("");
-      onMembersAdded();
-      onClose();
+  onMembersAdded();
+  // Update local pending list
+  setPendingInvites(prev => [{ id: crypto.randomUUID?.() || String(Date.now()), email: newMemberEmail.trim().toLowerCase(), created_at: new Date().toISOString(), token: inviteData.token }, ...prev])
 
     } catch (error) {
       console.error("Error in addMember:", error);
@@ -100,6 +129,8 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
     if (!isLoading) {
       setNewMemberName("");
       setNewMemberEmail("");
+      setLastInviteToken(null);
+      setLastInviteEmail(null);
       onClose();
     }
   };
@@ -151,6 +182,89 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
               </div>
             </div>
           </div>
+
+          {/* Shareable invite link (if available) */}
+          {lastInviteToken && inviteLink && (
+            <div className="p-3 border rounded-md bg-muted/40 space-y-2">
+              <div className="text-sm">
+                <span className="font-medium">Invite created</span>
+                {lastInviteEmail ? (
+                  <span className="text-muted-foreground"> — share this link with {lastInviteEmail}</span>
+                ) : null}
+              </div>
+              <div className="flex gap-2 items-center">
+                <Input readOnly value={inviteLink} className="text-xs" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(inviteLink);
+                      alert("Invite link copied");
+                    } catch {
+                      // Fallback
+                      const textarea = document.createElement('textarea');
+                      textarea.value = inviteLink;
+                      document.body.appendChild(textarea);
+                      textarea.select();
+                      document.execCommand('copy');
+                      document.body.removeChild(textarea);
+                      alert("Invite link copied");
+                    }
+                  }}
+                >
+                  Copy
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The invitee must sign in with the same email to join. Once they accept, they’ll appear in Add Expense.
+              </p>
+            </div>
+          )}
+
+          {/* Pending invitations list with copy buttons */}
+          {pendingInvites.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Pending invitations</div>
+              <div className="space-y-2">
+                {pendingInvites.map((inv) => {
+                  const link = buildInviteLink(inv.token || undefined);
+                  return (
+                    <div key={inv.id} className="flex items-center gap-2 text-sm">
+                      <div className="flex-1">
+                        <div>{inv.email}</div>
+                        <div className="text-xs text-muted-foreground">Sent {new Date(inv.created_at).toLocaleString()}</div>
+                      </div>
+                      {link ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(link)
+                              alert('Invite link copied')
+                            } catch {
+                              const textarea = document.createElement('textarea');
+                              textarea.value = link;
+                              document.body.appendChild(textarea);
+                              textarea.select();
+                              document.execCommand('copy');
+                              document.body.removeChild(textarea);
+                              alert('Invite link copied')
+                            }
+                          }}
+                        >
+                          Copy link
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">No link</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="flex flex-col sm:flex-row gap-3 pt-4">

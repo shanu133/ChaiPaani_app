@@ -115,6 +115,13 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
       return;
     }
 
+    // Validate groupId is a UUID before calling API
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!groupId || !uuidRegex.test(groupId)) {
+      console.error("Invalid or missing group ID. Please select a valid group.");
+      return;
+    }
+
     // Validate amount
     const totalAmount = parseFloat(formData.amount);
     if (isNaN(totalAmount) || totalAmount <= 0) {
@@ -155,7 +162,7 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
     setIsLoading(true);
 
     try {
-      const { data, error } = await expenseService.createExpense(
+      const { error } = await expenseService.createExpense(
         groupId,
         formData.description.trim(),
         totalAmount,
