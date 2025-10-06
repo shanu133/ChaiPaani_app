@@ -736,7 +736,7 @@ interface CurrentUser {
         isOpen={showAddExpense}
         onClose={() => setShowAddExpense(false)}
         groupMembers={(modalMembers && modalMembers.length > 0) ? modalMembers : transformMembersForModal(group.members)}
-        currentUser={currentUser}
+        currentUser={currentUser || { id: '', name: '', avatar: '' }}
         groupId={group.id}
         onExpenseCreated={handleExpenseCreated}
       />

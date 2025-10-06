@@ -60,12 +60,12 @@ export function EditGroupModal({ isOpen, onClose, group, onGroupUpdated }: EditG
 
   const handleUpdateGroup = async () => {
     if (!groupName.trim()) {
-      (Sonner as any)?.toast?.error ? (Sonner as any).toast.error("Please enter group name") : (Sonner as any)?.toast ? (Sonner as any).toast("Please enter group name") : alert("Please enter group name");
+      toast.error("Please enter group name");
       return;
     }
 
     if (!category) {
-      (Sonner as any)?.toast?.error ? (Sonner as any).toast.error("Please select a category") : (Sonner as any)?.toast ? (Sonner as any).toast("Please select a category") : alert("Please select a category");
+      toast.error("Please select a category");
       return;
     }
 
@@ -73,7 +73,7 @@ export function EditGroupModal({ isOpen, onClose, group, onGroupUpdated }: EditG
 
     try {
       if (!group?.id) {
-        (Sonner as any)?.toast?.error ? (Sonner as any).toast.error("Group ID is missing") : (Sonner as any)?.toast ? (Sonner as any).toast("Group ID is missing") : alert("Group ID is missing");
+        toast.error("Group ID is missing");
         return;
       }
 
@@ -87,24 +87,24 @@ export function EditGroupModal({ isOpen, onClose, group, onGroupUpdated }: EditG
 
       if (groupError) {
         console.error("Error updating group:", groupError);
-        (Sonner as any)?.toast?.error ? (Sonner as any).toast.error("Failed to update group") : (Sonner as any)?.toast ? (Sonner as any).toast("Failed to update group") : console.error("Failed to update group");
+        toast.error("Failed to update group");
         return;
       }
 
       if (!groupData) {
-        (Sonner as any)?.toast?.error ? (Sonner as any).toast.error("Failed to update group - no data returned") : (Sonner as any)?.toast ? (Sonner as any).toast("Failed to update group - no data returned") : console.error("Failed to update group - no data returned");
+        toast.error("Failed to update group - no data returned");
         return;
       }
 
-      (Sonner as any)?.toast?.success ? (Sonner as any).toast.success(`Group "${groupName}" updated successfully!`) : (Sonner as any)?.toast ? (Sonner as any).toast(`Group "${groupName}" updated successfully!`) : console.info(`Group "${groupName}" updated successfully!`);
+      toast.success(`Group "${groupName}" updated successfully!`);
 
       // Call parent callback with the updated group data
       onGroupUpdated(groupData);
 
       onClose();
     } catch (error) {
-  console.error("Error in handleUpdateGroup:", error);
-  (Sonner as any)?.toast?.error ? (Sonner as any).toast.error("Failed to update group. Please try again.") : (Sonner as any)?.toast ? (Sonner as any).toast("Failed to update group. Please try again.") : console.error("Failed to update group. Please try again.");
+      console.error("Error in handleUpdateGroup:", error);
+      toast.error("Failed to update group. Please try again.");
     } finally {
       setIsLoading(false);
     }
