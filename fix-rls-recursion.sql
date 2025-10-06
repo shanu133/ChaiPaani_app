@@ -156,8 +156,8 @@ CREATE POLICY "expense_splits_member_all" ON public.expense_splits
 -- SETTLEMENTS - Simple member-based access
 CREATE POLICY "settlements_member_all" ON public.settlements
   FOR ALL USING (
-    from_user_id = auth.uid()
-    OR to_user_id = auth.uid()
+    payer_id = auth.uid()
+    OR receiver_id = auth.uid()
     OR group_id IN (
       SELECT group_id FROM public.group_members 
       WHERE user_id = auth.uid()
@@ -234,13 +234,12 @@ BEGIN
   -- Check if user is already a member
   IF EXISTS(
     SELECT 1 FROM group_members gm
-    JOIN profiles p ON p.id = gm.user_id
+    JOIN auth.users u ON u.id = gm.user_id
     WHERE gm.group_id = p_group_id
-    AND LOWER(p.email) = LOWER(p_invitee_email)
+    AND LOWER(u.email) = LOWER(p_invitee_email)
   ) THEN
     RAISE EXCEPTION 'User is already a member of this group';
   END IF;
-
   -- Generate secure token
   v_token := encode(gen_random_bytes(32), 'hex');
 

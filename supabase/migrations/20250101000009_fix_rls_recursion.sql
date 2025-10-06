@@ -18,6 +18,23 @@ DROP POLICY IF EXISTS "Users can view expenses in groups they belong to" ON publ
 DROP POLICY IF EXISTS "Users can view expense splits in their groups" ON public.expense_splits;
 DROP POLICY IF EXISTS "Users can view settlements in their groups" ON public.settlements;
 
+-- Also drop simplified policies if they already exist (idempotent)
+DROP POLICY IF EXISTS "users_can_view_own_groups" ON public.groups;
+DROP POLICY IF EXISTS "users_can_create_groups" ON public.groups;
+DROP POLICY IF EXISTS "creators_can_update_groups" ON public.groups;
+DROP POLICY IF EXISTS "creators_can_delete_groups" ON public.groups;
+
+DROP POLICY IF EXISTS "users_can_view_own_memberships" ON public.group_members;
+DROP POLICY IF EXISTS "users_can_join_groups" ON public.group_members;
+DROP POLICY IF EXISTS "users_can_update_own_membership" ON public.group_members;
+DROP POLICY IF EXISTS "users_can_delete_own_membership" ON public.group_members;
+DROP POLICY IF EXISTS "creators_can_update_memberships" ON public.group_members;
+DROP POLICY IF EXISTS "creators_can_delete_memberships" ON public.group_members;
+
+DROP POLICY IF EXISTS "authenticated_users_view_expenses" ON public.expenses;
+DROP POLICY IF EXISTS "authenticated_users_view_splits" ON public.expense_splits;
+DROP POLICY IF EXISTS "authenticated_users_view_settlements" ON public.settlements;
+
 -- Create simple, non-recursive policies
 
 -- Groups: Allow users to see groups they created (no membership check to avoid recursion)
@@ -32,12 +49,50 @@ CREATE POLICY "users_can_create_groups" ON public.groups
 CREATE POLICY "creators_can_update_groups" ON public.groups
   FOR UPDATE USING (created_by = auth.uid());
 
+-- Allow group creators to delete their groups
+CREATE POLICY "creators_can_delete_groups" ON public.groups
+  FOR DELETE USING (created_by = auth.uid());
+
 -- Group members: Simple policies without cross-references
 CREATE POLICY "users_can_view_own_memberships" ON public.group_members
   FOR SELECT USING (user_id = auth.uid());
 
 CREATE POLICY "users_can_join_groups" ON public.group_members
   FOR INSERT WITH CHECK (user_id = auth.uid());
+
+-- Allow users to update/delete their own membership rows
+CREATE POLICY "users_can_update_own_membership" ON public.group_members
+  FOR UPDATE USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "users_can_delete_own_membership" ON public.group_members
+  FOR DELETE USING (user_id = auth.uid());
+
+-- Allow group creators to manage memberships in their groups
+CREATE POLICY "creators_can_update_memberships" ON public.group_members
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM public.groups g
+      WHERE g.id = group_members.group_id
+        AND g.created_by = auth.uid()
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.groups g
+      WHERE g.id = group_members.group_id
+        AND g.created_by = auth.uid()
+    )
+  );
+
+CREATE POLICY "creators_can_delete_memberships" ON public.group_members
+  FOR DELETE USING (
+    EXISTS (
+      SELECT 1 FROM public.groups g
+      WHERE g.id = group_members.group_id
+        AND g.created_by = auth.uid()
+    )
+  );
 
 -- Expenses: Allow viewing expenses in groups where user is a member (but avoid recursion)
 -- For now, use a simple policy that allows authenticated users to view expenses

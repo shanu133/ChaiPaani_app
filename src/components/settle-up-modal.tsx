@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react";
-import { Button } from "./ui/button";
+import { useState, useEffect, useCallback } from "react";  const [currentUser, setCurrentUser] = useState<{ id: string; email?: string } | null>(null);import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
@@ -7,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
-import { IndianRupee, ArrowRight, CheckCircle, Users } from "lucide-react";
+import { IndianRupee, ArrowRight, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 import { expenseService, authService } from "../lib/supabase-service";
 
@@ -38,32 +37,22 @@ export function SettleUpModal({ isOpen, onClose, group, onSettleUp }: SettleUpMo
   const [amount, setAmount] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [memberBalances, setMemberBalances] = useState<Record<string, number>>({});
-  const [loadingBalances, setLoadingBalances] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
-  // Fetch current user and balances when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      fetchCurrentUser();
-      if (group?.id) {
-        fetchMemberBalances();
-      }
-    }
-  }, [isOpen, group?.id]);
-
-  const fetchCurrentUser = async () => {
+  // Stable callbacks for effects
+  const fetchCurrentUser = useCallback(async () => {
     try {
       const user = await authService.getCurrentUser();
       setCurrentUser(user);
     } catch (error) {
       console.error("Error fetching current user:", error);
     }
-  };
+  }, []);
 
-  const fetchMemberBalances = async () => {
+  const fetchMemberBalances = useCallback(async () => {
     if (!group?.id) return;
 
-    setLoadingBalances(true);
+  // Optionally show a loading indicator for balances here if desired
     try {
       console.log(`Fetching balances for group ${group.id}`);
       const { data, error } = await expenseService.getUserBalance(group.id);
@@ -86,9 +75,17 @@ export function SettleUpModal({ isOpen, onClose, group, onSettleUp }: SettleUpMo
       console.error("Error fetching member balances:", error);
       toast.error("Failed to load balances");
     } finally {
-      setLoadingBalances(false);
+      // Done loading balances
     }
-  };
+  }, [group?.id]);
+
+  // Fetch current user and balances when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchCurrentUser();
+      fetchMemberBalances();
+    }
+  }, [isOpen, fetchCurrentUser, fetchMemberBalances]);
 
   const getCurrentUserBalance = () => {
     return currentUser ? memberBalances[currentUser.id] || 0 : 0;
@@ -210,9 +207,8 @@ export function SettleUpModal({ isOpen, onClose, group, onSettleUp }: SettleUpMo
 
       // Refresh balances after settlement
       if (group?.id) {
-        fetchMemberBalances();
+        await fetchMemberBalances();
       }
-
       const payerName = getMemberName(selectedPayer);
       const receiverName = getMemberName(selectedReceiver);
 

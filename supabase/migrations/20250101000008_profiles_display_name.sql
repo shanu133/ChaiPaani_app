@@ -8,7 +8,8 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS display_name TEXT;
 -- Backfill existing profiles: use full_name if present, otherwise email
 UPDATE public.profiles
 SET display_name = COALESCE(NULLIF(TRIM(full_name), ''), email)
-WHERE display_name IS NULL;
+WHERE display_name IS NULL
+  OR NULLIF(TRIM(display_name), '') IS NULL;
 
 -- Update handle_new_user trigger function to set display_name
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -23,9 +24,8 @@ BEGIN
     NEW.email,
     NEW.raw_user_meta_data->>'full_name',
     NEW.raw_user_meta_data->>'avatar_url',
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email)
-  )
-  ON CONFLICT (id) DO NOTHING;
+    COALESCE(NULLIF(TRIM(NEW.raw_user_meta_data->>'full_name'), ''), NEW.email)
+  )  ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
 END;
 $$;
@@ -40,11 +40,10 @@ BEGIN
   UPDATE public.profiles
   SET
     email = NEW.email,
-    full_name = COALESCE(NEW.raw_user_meta_data->>'full_name', full_name),
+    full_name = COALESCE(NULLIF(TRIM(NEW.raw_user_meta_data->>'full_name'), ''), full_name),
     avatar_url = COALESCE(NEW.raw_user_meta_data->>'avatar_url', avatar_url),
     display_name = COALESCE(
-      NEW.raw_user_meta_data->>'full_name',
-      display_name,
+      NULLIF(TRIM(NEW.raw_user_meta_data->>'full_name'), ''),
       NEW.email
     ),
     updated_at = NOW()
@@ -54,8 +53,9 @@ END;
 $$;
 
 -- Ensure triggers are attached (they should already be from previous migration)
--- DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
--- CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+-- Ensure triggers are attached (they should already be from previous migration)
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- DROP TRIGGER IF EXISTS on_auth_user_updated ON auth.users;
--- CREATE TRIGGER on_auth_user_updated AFTER UPDATE ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_user_update();
+DROP TRIGGER IF EXISTS on_auth_user_updated ON auth.users;
+CREATE TRIGGER on_auth_user_updated AFTER UPDATE ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_user_update();

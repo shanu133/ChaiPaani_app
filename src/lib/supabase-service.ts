@@ -26,7 +26,7 @@ export const authService = {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || 'https://your-production-domain.com'
+        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || window.location.origin
       }
     })
     return { data, error }
@@ -326,6 +326,68 @@ export const groupService = {
       .eq('user_id', user.id)
 
     return { data: null, error }
+  },
+
+  transferOwnership: async (groupId: string, newOwnerUserId: string) => {
+    const user = await authService.getCurrentUser()
+    if (!user) return { data: null, error: { message: 'User not authenticated' } }
+
+    try {
+      // Preferred path: RPC handles RLS-sensitive update under SECURITY DEFINER
+      try {
+        const { data: rpcData, error: rpcError } = await supabase.rpc('transfer_group_ownership', {
+          p_group_id: groupId,
+          p_new_owner_id: newOwnerUserId
+        })
+        if (!rpcError && rpcData && (rpcData.ok || rpcData.success)) {
+          return { data: rpcData, error: null }
+        }
+        // If RPC exists but returned error object, surface it
+        if (rpcError && (rpcError as any)?.code !== 'PGRST404') {
+          return { data: null, error: rpcError }
+        }
+      } catch (e) {
+        // Ignore and fall back to direct update under RLS if RPC is missing
+      }
+
+      // Ensure caller is current owner
+      const { data: group, error: fetchErr } = await supabase
+        .from('groups')
+        .select('id, created_by')
+        .eq('id', groupId)
+        .single()
+      if (fetchErr) return { data: null, error: fetchErr }
+      if (!group || group.created_by !== user.id) return { data: null, error: { message: 'Only the current owner can transfer ownership' } }
+
+      // Ensure target user is a member of the group
+      const { data: member, error: memberErr } = await supabase
+        .from('group_members')
+        .select('id')
+        .eq('group_id', groupId)
+        .eq('user_id', newOwnerUserId)
+        .single()
+      if (memberErr || !member) return { data: null, error: { message: 'Selected user is not a member of this group' } }
+
+      // Perform the transfer
+      const { data: updated, error: updateErr } = await supabase
+        .from('groups')
+        .update({ created_by: newOwnerUserId })
+        .eq('id', groupId)
+        .select('id, created_by')
+        .single()
+      if (updateErr) return { data: null, error: updateErr }
+
+      // Optionally elevate the new owner to admin role if roles are used
+      await supabase
+        .from('group_members')
+        .update({ role: 'admin' })
+        .eq('group_id', groupId)
+        .eq('user_id', newOwnerUserId)
+
+      return { data: updated, error: null }
+    } catch (error) {
+      return { data: null, error }
+    }
   }
 }
 
@@ -358,9 +420,10 @@ export const expenseService = {
       .single()
 
     if (expenseError) {
-      // Normalize common membership errors
-      const msg = (expenseError.message || '').toLowerCase()
-      if (msg.includes('not a member') || msg.includes('permission denied') || msg.includes('rls')) {
+      // Prefer structured error properties over brittle message checks
+      const code = (expenseError as any)?.code
+      const status = (expenseError as any)?.status
+      if (code === 'PGRST301' || code === '42501' || status === 403) {
         return { data: null, error: { message: 'User is not a member of this group' } }
       }
       return { data: null, error: expenseError }
@@ -372,14 +435,14 @@ export const expenseService = {
       user_id: split.user_id,
       amount: split.amount
     }))
-
     const { error: splitsError } = await supabase
       .from('expense_splits')
       .insert(splitsData)
       .select()
 
     if (splitsError) {
-      // If splits fail, we should probably delete the expense, but for now just return error
+      // Clean up the orphaned expense
+      await supabase.from('expenses').delete().eq('id', expense.id)
       return { data: null, error: splitsError }
     }
 
@@ -423,19 +486,53 @@ export const expenseService = {
       const user = await authService.getCurrentUser()
       if (!user) return { data: [], error: { message: 'User not authenticated' } }
   
-      // Phase 1: Get recent expenses (minimal columns)
-      const { data: expenses, error: expensesError } = await supabase
+      // Phase 1a: Get expenses where the user is the payer
+      const { data: payerExpenses, error: payerError } = await supabase
         .from('expenses')
         .select('id, description, amount, category, created_at, payer_id, group_id')
-        .or(`payer_id.eq.${user.id},expense_splits.user_id.eq.${user.id}`)
+        .eq('payer_id', user.id)
         .order('created_at', { ascending: false })
         .limit(limit)
-  
-      if (expensesError) {
-        console.error('Error fetching expenses:', expensesError)
-        return { data: [], error: expensesError }
+
+      if (payerError) {
+        console.error('Error fetching payer expenses:', payerError)
+        return { data: [], error: payerError }
       }
-  
+
+      // Phase 1b: Find expenses where the user has splits
+      const { data: userSplits, error: splitsError } = await supabase
+        .from('expense_splits')
+        .select('expense_id')
+        .eq('user_id', user.id)
+        .limit(limit)
+
+      if (splitsError) {
+        console.error('Error fetching user splits:', splitsError)
+        return { data: [], error: splitsError }
+      }
+
+      const splitExpenseIds = (userSplits || []).map(s => s.expense_id)
+
+      let splitExpenses: any[] = []
+      if (splitExpenseIds.length > 0) {
+        const { data, error } = await supabase
+          .from('expenses')
+          .select('id, description, amount, category, created_at, payer_id, group_id')
+          .in('id', splitExpenseIds)
+          .order('created_at', { ascending: false })
+
+        if (!error) splitExpenses = data || []
+      }
+
+      // Merge, dedupe, sort, limit
+      const expenseMap = new Map<string, any>()
+      ;[...(payerExpenses || []), ...splitExpenses].forEach((exp: any) => {
+        expenseMap.set(exp.id, exp)
+      })
+      const expenses = Array.from(expenseMap.values())
+        .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, limit)
+
       if (!expenses || expenses.length === 0) {
         return { data: [], error: null }
       }
@@ -588,86 +685,24 @@ export const expenseService = {
     })
 
     if (error) {
-      const msg = (error.message || '').toLowerCase()
-      const isMissing = (error as any)?.status === 404 || msg.includes('not found') || msg.includes('does not exist')
-      if (!isMissing) {
-        return { data: null, error }
+      // Prefer structured fields to detect missing RPC, fall back to message matching
+      const status = (error as any)?.status
+      const code = String((error as any)?.code || '').toUpperCase()
+      const structuredMissing = status === 404 || code === '404' || code === 'PGRST404'
+      const msg = String((error as any)?.message || '').toLowerCase()
+      const details = String((error as any)?.details || '').toLowerCase()
+      const hint = String((error as any)?.hint || '').toLowerCase()
+      const textMissing = [msg, details, hint].some(t =>
+        t.includes('not found') ||
+        t.includes('does not exist') ||
+        t.includes('could not find')
+      )
+      const isMissing = structuredMissing || textMissing
+      if (isMissing) {
+        // RPC not available - settlement requires atomic transaction
+        return { data: null, error: { message: 'Settlement feature requires database function setup. Please contact support.' } }
       }
-
-      // Fallback path: perform client-side settle if RPC isn't available yet
-      try {
-        // Find unsettled expense splits that can be settled (join-safe selection)
-        const { data: splitsToSettle, error: fetchError } = await supabase
-          .from('expense_splits')
-          .select('id, amount, expense_id, is_settled')
-          .eq('user_id', fromUserId)
-          .eq('is_settled', false)
-          .order('created_at', { ascending: true })
-
-        if (fetchError) return { data: null, error: fetchError }
-
-        let remainingAmount = amount
-        let totalSettled = 0
-        const settledSplits: string[] = []
-
-        for (const split of splitsToSettle || []) {
-          if (remainingAmount <= 0) break
-          const { data: exp, error: expErr } = await supabase
-            .from('expenses')
-            .select('id, payer_id, group_id')
-            .eq('id', split.expense_id)
-            .single()
-
-          if (expErr || !exp) continue
-          if (exp.payer_id === toUserId && exp.group_id === groupId) {
-            // Only settle full splits to avoid marking partially-paid splits as settled
-            if (remainingAmount >= (split as any).amount) {
-              // Verify user can settle this split (either the payer or the one who owes)
-              if (exp.payer_id !== user.id && fromUserId !== user.id) {
-                continue
-              }
-
-              const { error: settleError } = await supabase
-                .from('expense_splits')
-                .update({
-                  is_settled: true,
-                  settled_at: new Date().toISOString()
-                })
-                .eq('id', (split as any).id)
-
-              if (settleError) continue
-              settledSplits.push((split as any).id)
-              remainingAmount -= (split as any).amount
-              totalSettled += (split as any).amount
-            } else {
-              break
-            }
-          }
-        }
-
-        if (totalSettled > 0) {
-          await supabase
-            .from('settlements')
-            .insert({
-              group_id: groupId,
-              payer_id: fromUserId,
-              receiver_id: toUserId,
-              amount: totalSettled,
-              description: 'Settle up'
-            })
-        }
-
-        return {
-          data: {
-            settled_splits: settledSplits,
-            settled_amount: totalSettled,
-            remaining_amount: remainingAmount
-          },
-          error: null
-        }
-      } catch (e: any) {
-        return { data: null, error: { message: e?.message || 'Fallback settle failed' } }
-      }
+      return { data: null, error }
     }
 
     return {

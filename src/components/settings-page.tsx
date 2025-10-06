@@ -78,11 +78,10 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
         setProfile({
           name: data?.display_name || data?.full_name || user?.email || "User",
           email: data?.email || user?.email || "",
-          phone: "",
-          defaultCurrency: "INR",
-          language: "English",
-        });
-      } catch (e: any) {
+          phone: data?.phone || "",
+          defaultCurrency: data?.default_currency || "INR",
+          language: data?.language || "English",
+        });      } catch (e: any) {
         setProfileError(e?.message || "Failed to load profile");
       } finally {
         setLoadingProfile(false);
@@ -122,25 +121,40 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
   });
 
   const handleSaveProfile = async () => {
-    try {
-      const displayName = profile.name?.trim();
-      if (!displayName) {
-        toast.error("Name cannot be empty");
-        return;
-      }
-      const { error } = await profileService.updateDisplayName(displayName);
-      if (error) {
-        toast.error(error.message || "Failed to update profile");
-        return;
-      }
-      setIsEditing(false);
-      toast.success("Profile updated successfully!");
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to update profile");
-    }
-  };
+// (some lines above)
+const [savingProfile, setSavingProfile] = useState(false);
 
-  const handleDeleteAccount = () => {
+const handleSaveProfile = async () => {
+  try {
+    setSavingProfile(true);
+
+    const displayName = profile.name?.trim();
+    if (!displayName) {
+      toast.error("Name cannot be empty");
+      return;
+    }
+
+    const { error } = await profileService.updateProfile({
+      display_name: displayName,
+      phone: profile.phone,
+      default_currency: profile.defaultCurrency,
+      language: profile.language,
+    });
+
+    if (error) {
+      toast.error(error.message || "Failed to update profile");
+      return;
+    }
+
+    setIsEditing(false);
+    toast.success("Profile updated successfully!");
+  } catch (e: any) {
+    toast.error(e?.message || "Failed to update profile");
+  } finally {
+    setSavingProfile(false);
+  }
+};
+// (some lines below)  const handleDeleteAccount = () => {
     toast.error("Account deletion requested. Please contact support.");
   };
 

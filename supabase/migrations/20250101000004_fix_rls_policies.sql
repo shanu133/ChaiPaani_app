@@ -37,4 +37,10 @@ CREATE POLICY "Users can join groups" ON group_members
 
 -- Allow users to update their own membership roles/status
 CREATE POLICY "Users can update their own memberships" ON group_members
-  FOR UPDATE USING (auth.uid() = user_id);
+  FOR UPDATE USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- Allow users to leave groups by deleting their own membership rows
+DROP POLICY IF EXISTS "Users can leave groups" ON group_members;
+CREATE POLICY "Users can leave groups" ON group_members
+  FOR DELETE USING (auth.uid() = user_id);

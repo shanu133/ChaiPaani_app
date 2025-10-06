@@ -27,11 +27,4 @@ declare module '*.gif' {
   export default value;
 }
 
-declare module 'sonner' {
-  export * from 'sonner';
-}
-
-declare module '@/components/ui/sonner' {
-  import { Toaster, ToasterProps } from 'sonner';
-  export { Toaster, ToasterProps };
-}
+// Note: UI component module declarations are defined in a dedicated types file.

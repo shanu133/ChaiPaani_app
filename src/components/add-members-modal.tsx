@@ -15,6 +15,40 @@ function buildInviteLink(token?: string | null): string | null {
   return `${base}/#token=${encodeURIComponent(token)}`;
 }
 
+// Reusable helper to copy text to clipboard with a DOM fallback
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if ((navigator as any)?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      alert('Invite link copied');
+      return true;
+    }
+    throw new Error('Clipboard API unavailable');
+  } catch {
+    // Fallback to textarea for older browsers
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      const ok = document.execCommand('copy');
+      if (ok) {
+        alert('Invite link copied');
+        return true;
+      }
+    } catch {
+      // ignore and fall through to failure
+    } finally {
+      document.body.removeChild(textarea);
+    }
+    alert('Failed to copy link');
+    return false;
+  }
+}
+
 interface AddMembersModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -31,6 +65,8 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
   const [isLoading, setIsLoading] = useState(false);
   const [lastInviteToken, setLastInviteToken] = useState<string | null>(null);
   const [lastInviteEmail, setLastInviteEmail] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
   interface PendingInvitation {
     id: string;
     invitee_email: string;
@@ -64,27 +100,32 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
   }, [group?.id, isOpen])
 
   const addMember = async () => {
+    // Inline validation with user-visible errors
     if (!newMemberName.trim()) {
-      console.error("Please enter member name");
+      setNameError("Please enter member name");
       return;
+    } else {
+      setNameError(null);
     }
 
     if (!newMemberEmail.trim()) {
-      console.error("Please enter member email");
+      setEmailError("Please enter member email");
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(newMemberEmail)) {
-      console.error("Please enter a valid email address");
+      setEmailError("Please enter a valid email address");
       return;
+    } else {
+      setEmailError(null);
     }
 
     setIsLoading(true);
 
     try {
       if (!group?.id) {
-        console.error("Group ID is missing");
+        setEmailError("Group ID is missing");
         return;
       }
 
@@ -111,15 +152,18 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
   console.log(`Invitation sent to ${newMemberEmail}!`);
   alert(`Invitation created for ${newMemberEmail}`);
 
-      setNewMemberName("");
-      setNewMemberEmail("");
+  setNewMemberName("");
+  setNewMemberEmail("");
+  setNameError(null);
+  setEmailError(null);
   onMembersAdded();
   // Update local pending list
   setPendingInvites(prev => [{ id: crypto.randomUUID?.() || String(Date.now()), email: newMemberEmail.trim().toLowerCase(), created_at: new Date().toISOString(), token: inviteData.token }, ...prev])
 
     } catch (error) {
       console.error("Error in addMember:", error);
-      console.error("Failed to add member. Please try again.");
+      const message = (error as any)?.message || 'Failed to add member. Please try again.';
+      alert(`Failed to add member: ${message}`);
     } finally {
       setIsLoading(false);
     }
@@ -154,30 +198,46 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
             <div className="space-y-2">
               <Label>Add New Member</Label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <Input
-                  placeholder="Member name"
-                  value={newMemberName}
-                  onChange={(e) => setNewMemberName(e.target.value)}
-                  disabled={isLoading}
-                  onKeyPress={(e) => e.key === 'Enter' && addMember()}
-                />
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-1">
                   <Input
-                    placeholder="Email address"
-                    type="email"
-                    value={newMemberEmail}
-                    onChange={(e) => setNewMemberEmail(e.target.value)}
+                    placeholder="Member name"
+                    value={newMemberName}
+                    onChange={(e) => {
+                      setNewMemberName(e.target.value);
+                      if (nameError) setNameError(null);
+                    }}
                     disabled={isLoading}
-                    className="flex-1"
                     onKeyPress={(e) => e.key === 'Enter' && addMember()}
                   />
-                  <Button
-                    size="sm"
-                    onClick={addMember}
-                    disabled={isLoading || !newMemberName.trim() || !newMemberEmail.trim()}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </Button>
+                  {nameError ? (
+                    <p className="text-xs text-red-600">{nameError}</p>
+                  ) : null}
+                </div>
+                <div className="flex flex-col gap-1">
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Email address"
+                      type="email"
+                      value={newMemberEmail}
+                      onChange={(e) => {
+                        setNewMemberEmail(e.target.value);
+                        if (emailError) setEmailError(null);
+                      }}
+                      disabled={isLoading}
+                      className="flex-1"
+                      onKeyPress={(e) => e.key === 'Enter' && addMember()}
+                    />
+                    <Button
+                      size="sm"
+                      onClick={addMember}
+                      disabled={isLoading || !newMemberName.trim() || !newMemberEmail.trim()}
+                    >
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  {emailError ? (
+                    <p className="text-xs text-red-600">{emailError}</p>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -197,21 +257,7 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(inviteLink);
-                      alert("Invite link copied");
-                    } catch {
-                      // Fallback
-                      const textarea = document.createElement('textarea');
-                      textarea.value = inviteLink;
-                      document.body.appendChild(textarea);
-                      textarea.select();
-                      document.execCommand('copy');
-                      document.body.removeChild(textarea);
-                      alert("Invite link copied");
-                    }
-                  }}
+                  onClick={() => copyToClipboard(inviteLink)}
                 >
                   Copy
                 </Button>
@@ -239,20 +285,7 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
                         <Button
                           type="button"
                           variant="outline"
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(link)
-                              alert('Invite link copied')
-                            } catch {
-                              const textarea = document.createElement('textarea');
-                              textarea.value = link;
-                              document.body.appendChild(textarea);
-                              textarea.select();
-                              document.execCommand('copy');
-                              document.body.removeChild(textarea);
-                              alert('Invite link copied')
-                            }
-                          }}
+                          onClick={() => copyToClipboard(link)}
                         >
                           Copy link
                         </Button>

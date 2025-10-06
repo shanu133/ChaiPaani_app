@@ -71,8 +71,30 @@ interface GroupDetails {
   created_at: string;
   created_by: string;
   members: GroupMember[];
-  expenses: any[];
+interface Expense {
+  id: string;
+  description: string;
+  amount: number;
+  payer?: {
+    full_name?: string;
+  };
+  created_at: string;
+  // Add other expense fields as needed
+}
+
+interface GroupDetails {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  currency: string;
+  created_at: string;
+  created_by: string;
+  members: GroupMember[];
+  expenses: Expense[];
   totalExpenses: number;
+  userBalance: number;
+}  totalExpenses: number;
   userBalance: number;
 }
 
@@ -87,8 +109,17 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [group, setGroup] = useState<GroupDetails | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<any>(null);
-  const [isOwner, setIsOwner] = useState(false);
+// define the CurrentUser interface (e.g. at the top of the file)
+interface CurrentUser {
+  id: string;
+  name: string;
+  avatar: string;
+}
+
+// …
+
+  // replace `any` with the new interface (allowing null initial state)
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);  const [isOwner, setIsOwner] = useState(false);
   const [modalMembers, setModalMembers] = useState<{ id: string; name: string; avatar: string }[]>([]);
 
   // Fetch group details on component mount
@@ -97,11 +128,13 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
     fetchCurrentUser();
   }, [groupId]);
 
-  const fetchGroupDetails = async () => {
-    try {
-      setLoading(true);
+function isValidMemberStatus(status: any): status is 'active' | 'pending' | 'inactive' {
+  return status === 'active' || status === 'pending' || status === 'inactive';
+}
 
-      // Get group details with members and expenses
+          let status: 'active' | 'pending' | 'inactive' =
+            isValidMemberStatus(member.status) ? member.status : 'active';
+          let invitation = member.invitation || null;      // Get group details with members and expenses
       const { data: groupData, error: groupError } = await groupService.getGroupDetails(groupId);
 
       if (groupError) {
@@ -120,10 +153,11 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
       }
 
       // Get current user to determine ownership
-      const user = await authService.getCurrentUser();
-      const isGroupOwner = groupData.created_by === user?.id;
+      // Get current user to determine ownership
+      // Wait for currentUser to be set or fetch if not available
+      const userId = currentUser?.id || (await authService.getCurrentUser())?.id;
+      const isGroupOwner = groupData.created_by === userId;
       setIsOwner(isGroupOwner);
-
       // Transform members data to include invitation status
       const transformedMembers: GroupMember[] = await Promise.all(
         (groupData.group_members || []).map(async (member: any) => {
@@ -148,14 +182,26 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
                 invitation = invites;
               } else {
                 status = 'inactive';
-              }
-            } catch (error) {
-              status = 'inactive';
-            }
-          }
+interface BalanceData {
+  net_balance?: number;
+  amount_owed?: number;
+  amount_owes?: number;
+}
 
-          return {
-            id: member.id,
+try {
+  const { data: balanceData } = await expenseService.getUserBalance(groupId);
+  if (Array.isArray(balanceData) && balanceData.length > 0) {
+    const first = balanceData[0] as BalanceData;
+    // Prefer computed net_balance if available; otherwise derive if amount fields exist
+    if (typeof first.net_balance === 'number') {
+      userBalance = first.net_balance;
+    } else if (typeof first.amount_owed === 'number' && typeof first.amount_owes === 'number') {
+      userBalance = first.amount_owed - first.amount_owes;
+    }
+  }
+} catch (error) {
+  // handle error
+}            id: member.id,
             user_id: member.user_id,
             role: member.role,
             joined_at: member.joined_at,
@@ -229,25 +275,27 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
     }
   };
 
+  // Transform GroupMember records to the minimal shape required by modals
+  const transformMembersForModal = (members: Array<any>) => {
+    return (members || [])
+      .filter((m: any) => m.status === 'active')
+      .map((m: any) => ({
+        id: m.user_id,
+        name: m.profile?.full_name || m.display_name || 'Unknown',
+        avatar: (m.profile?.full_name || m.display_name || 'UN').substring(0, 2).toUpperCase() || 'UN'
+      }));
+  };
+
   const handleAddExpense = async () => {
     try {
       // Fetch fresh members via RPC to ensure latest active members are included
       const { data } = await groupService.getGroupMembersWithStatus(groupId);
-      const active = (data || []).filter((r: any) => r.status === 'active');
-      const mapped = active.map((m: any) => ({
-        id: m.user_id,
-        name: m.display_name,
-        avatar: (m.display_name || 'UN').substring(0, 2).toUpperCase()
-      }));
+      const mapped = transformMembersForModal(data || []);
       setModalMembers(mapped);
     } catch (e) {
       // Fallback to existing group members if RPC fails
       if (group) {
-        setModalMembers(group.members.filter(m => m.status === 'active').map(m => ({
-          id: m.user_id,
-          name: m.profile?.full_name || 'Unknown',
-          avatar: m.profile?.full_name?.substring(0, 2).toUpperCase() || 'UN'
-        })));
+        setModalMembers(transformMembersForModal(group.members));
       }
     } finally {
       setShowAddExpense(true);
@@ -296,28 +344,28 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
     if (!group) return;
 
     try {
-      let error = null as any;
+      let opError: { message?: string } | null = null;
 
       if (member.status === 'pending' && member.invitation?.invitee_email) {
         // Cancel a pending invitation instead of trying to remove a non-existent membership
-        const res = await supabase
+        const { error } = await supabase
           .from('invitations')
           .delete()
           .eq('group_id', group.id)
           .eq('invitee_email', member.invitation.invitee_email)
           .eq('status', 'pending');
-        error = res.error;
+        opError = error;
       } else {
         // Remove an active member by group_id + user_id (not by synthetic id)
-        const res = await supabase
+        const { error } = await supabase
           .from('group_members')
           .delete()
           .eq('group_id', group.id)
           .eq('user_id', member.user_id);
-        error = res.error;
+        opError = error;
       }
 
-      if (error) throw error;
+      if (opError) throw opError;
 
       console.log("Member removed successfully");
       // Refresh group data
@@ -708,11 +756,7 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
       <AddExpenseModal
         isOpen={showAddExpense}
         onClose={() => setShowAddExpense(false)}
-        groupMembers={(modalMembers && modalMembers.length > 0) ? modalMembers : group.members.filter(m => m.status === 'active').map(m => ({
-          id: m.user_id,
-          name: m.profile?.full_name || 'Unknown',
-          avatar: m.profile?.full_name?.substring(0, 2).toUpperCase() || 'UN'
-        }))}
+        groupMembers={(modalMembers && modalMembers.length > 0) ? modalMembers : transformMembersForModal(group.members)}
         currentUser={currentUser}
         groupId={group.id}
         onExpenseCreated={handleExpenseCreated}
@@ -724,11 +768,7 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
         group={{
           id: group.id,
           name: group.name,
-          members: group.members.filter(m => m.status === 'active').map(m => ({
-            id: m.user_id,
-            name: m.profile?.full_name || 'Unknown',
-            avatar: m.profile?.full_name?.substring(0, 2).toUpperCase() || 'UN'
-          }))
+          members: transformMembersForModal(group.members)
         }}
         onSettleUp={() => {
           // Sync group view after a successful settlement

@@ -6,9 +6,8 @@ import { Label } from './ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Separator } from './ui/separator';
 import { Card, CardContent } from './ui/card';
-import { RadioGroup, RadioGroupItem } from './ui/radio-group';
-import { toast } from 'sonner';
-import { Scan, FileImage, Camera, ArrowRight, CheckCircle, AlertCircle, X, Upload } from 'lucide-react';
+import * as Sonner from 'sonner';
+import { Scan, Camera, X, Upload } from 'lucide-react';
 
 interface ScanReceiptModalProps {
   isOpen: boolean;
@@ -17,6 +16,12 @@ interface ScanReceiptModalProps {
 }
 
 export const ScanReceiptModal: React.FC<ScanReceiptModalProps> = ({ isOpen, onClose, onSuccess }) => {
+  // Safe toast wrapper (falls back to console if Sonner.toast is unavailable)
+  const notify = {
+    info: (msg: string) => ((Sonner as any).toast?.info ? (Sonner as any).toast.info(msg) : (Sonner as any).toast ? (Sonner as any).toast(msg) : console.info(msg)),
+    success: (msg: string) => ((Sonner as any).toast?.success ? (Sonner as any).toast.success(msg) : (Sonner as any).toast ? (Sonner as any).toast(msg) : console.info(msg)),
+    error: (msg: string) => ((Sonner as any).toast?.error ? (Sonner as any).toast.error(msg) : (Sonner as any).toast ? (Sonner as any).toast(msg) : console.error(msg)),
+  };
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -35,25 +40,32 @@ export const ScanReceiptModal: React.FC<ScanReceiptModalProps> = ({ isOpen, onCl
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Enforce JPG/PNG only and max 5MB
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    const allowedTypes = ['image/jpeg', 'image/png'];
+    if (file.size > maxSize) {
+      notify.error('File size exceeds 5MB. Please upload a smaller image.');
+      return;
+    }
+    if (!allowedTypes.includes(file.type)) {
+      notify.error('Unsupported file type. Please upload a JPG or PNG image.');
+      return;
+    }
+
+    // Preview the image and advance to processing step
     const reader = new FileReader();
-    reader.onload = (event) => {
-      setUploadedImage(event.target?.result as string);
+    reader.onload = () => {
+      setUploadedImage(reader.result as string);
       setCurrentStep(2);
-      toast.info('Image uploaded successfully');
     };
     reader.readAsDataURL(file);
   };
 
-  const handleCameraCapture = () => {
-    // This would integrate with device camera in a real implementation
-    toast.info('Camera capture functionality would be implemented here');
-  };
-
   const simulateImageProcessing = () => {
     setIsProcessing(true);
-    toast.info('Processing receipt image...');
+    notify.info('Processing receipt image...');
 
-    // Simulate API call with timeout
+    // TODO: Replace with actual receipt processing API
     setTimeout(() => {
       setExtractedItems([
         { name: 'Coffee', price: 4.50, quantity: 2 },
@@ -67,12 +79,35 @@ export const ScanReceiptModal: React.FC<ScanReceiptModalProps> = ({ isOpen, onCl
       });
       setCurrentStep(3);
       setIsProcessing(false);
-      toast.success('Receipt data extracted successfully');
-    }, 2000);
+      notify.success('Receipt data extracted successfully');
+    }, 1500);
   };
 
+  const handleCameraCapture = async () => {
+    notify.info('Camera capture is not available in this demo. Please upload an image.');
+  };
+
+
   const handleConfirmDetails = () => {
-    toast.success('Expense created from receipt');
+      // Validate receipt details
+      if (!receiptDetails.merchantName.trim()) {
+        notify.error('Please enter a merchant name.');
+        return;
+      }
+      if (receiptDetails.totalAmount <= 0 || isNaN(receiptDetails.totalAmount)) {
+        notify.error('Please enter a valid total amount.');
+        return;
+      }
+      if (extractedItems.length === 0) {
+        notify.error('At least one item is required.');
+        return;
+      }
+      if (extractedItems.some(item => !item.name.trim() || item.price <= 0 || item.quantity < 1)) {
+        notify.error('Please ensure all items have valid names, prices, and quantities.');
+        return;
+      }
+
+      notify.success('Expense created from receipt');
     onSuccess?.();
     onClose();
   };
@@ -117,12 +152,12 @@ export const ScanReceiptModal: React.FC<ScanReceiptModalProps> = ({ isOpen, onCl
                   <CardContent className="p-8 flex flex-col items-center justify-center text-center">
                     <Upload className="h-12 w-12 text-muted-foreground mb-4" />
                     <h4 className="font-medium mb-1">Drag and drop your receipt image here</h4>
-                    <p className="text-sm text-muted-foreground mb-4">Supports JPG, PNG, and PDF files up to 5MB</p>
+                    <p className="text-sm text-muted-foreground mb-4">Supports JPG and PNG files up to 5MB</p>
                     <div className="relative">
                       <Button variant="default">Select File</Button>
                       <input
                         type="file"
-                        accept="image/*,.pdf"
+                        accept=".jpg,.jpeg,.png"
                         onChange={handleImageUpload}
                         className="absolute inset-0 opacity-0 cursor-pointer"
                       />
@@ -254,7 +289,7 @@ export const ScanReceiptModal: React.FC<ScanReceiptModalProps> = ({ isOpen, onCl
                         value={item.quantity}
                         onChange={(e) => {
                           const updatedItems = [...extractedItems];
-                          updatedItems[index].quantity = parseInt(e.target.value) || 1;
+                          updatedItems[index].quantity = Math.max(1, parseInt(e.target.value) || 1);
                           setExtractedItems(updatedItems);
                         }}
                       />

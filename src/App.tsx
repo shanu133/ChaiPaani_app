@@ -8,6 +8,7 @@ const NotificationsPage = lazy(() => import("./components/notifications-page").t
 const ActivityPage = lazy(() => import("./components/activity-page").then(m => ({ default: m.ActivityPage })));
 const SettingsPage = lazy(() => import("./components/settings-page").then(m => ({ default: m.SettingsPage })));
 import { Toaster } from "./components/ui/sonner";
+import * as Sonner from "sonner";
 import { authService, invitationService } from "./lib/supabase-service";
 
 type AppView = "landing" | "auth" | "dashboard" | "groups" | "group" | "notifications" | "activity" | "settings";
@@ -71,9 +72,6 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-// At the top of the file with your other imports
-import { toast } from "sonner";
-
   // When authenticated and we have a pending invite token, accept it once
   useEffect(() => {
     const acceptIfPending = async () => {
@@ -84,30 +82,14 @@ import { toast } from "sonner";
         const { error } = await invitationService.acceptByToken(token);
         if (error) {
           console.error("Failed to accept invite token:", error);
-          toast.error((error as any)?.message || "Failed to join group from invitation");
+          (Sonner as any)?.toast?.error?.((error as any)?.message || "Failed to join group from invitation");
         } else {
-          toast.success("Joined group successfully");
+          (Sonner as any)?.toast?.success?.("Joined group successfully");
         }
       } catch (e) {
-        try {
-          const error = await acceptInvite();
-          if (error) {
-            console.error("Failed to accept invite token:", error);
-            toast.error((error as any)?.message || "Failed to join group from invitation");
-            // Only clear token on non-retryable errors
-            if ((error as any)?.statusCode === 404 || (error as any)?.statusCode === 410) {
-              sessionStorage.removeItem("invite_token");
-              setPendingInviteToken(null);
-            }
-          } else {
-            toast.success("Joined group successfully");
-            sessionStorage.removeItem("invite_token");
-            setPendingInviteToken(null);
-          }
-        } catch (e) {
-          console.error("Error accepting invite token:", e);
-          toast.error("Unable to accept invitation");
-        }      } finally {
+  console.error("Error accepting invite token:", e);
+  (Sonner as any)?.toast?.error?.("Unable to accept invitation");
+      } finally {
         sessionStorage.removeItem("invite_token");
         setPendingInviteToken(null);
       }
