@@ -3,6 +3,18 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
+// Runtime validation for required environment variables
+if (!supabaseUrl || !supabaseAnonKey) {
+  const missing: string[] = [];
+  if (!supabaseUrl) missing.push('VITE_SUPABASE_URL');
+  if (!supabaseAnonKey) missing.push('VITE_SUPABASE_ANON_KEY');
+  
+  throw new Error(
+    `Missing required environment variables: ${missing.join(', ')}\n` +
+    'Please define them in your Vite environment (e.g., .env.local or .env file).'
+  );
+}
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 // Type definitions

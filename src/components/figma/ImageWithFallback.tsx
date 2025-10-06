@@ -1,38 +1,48 @@
 import React from 'react';
 
-interface ImageWithFallbackProps {
+interface ImageWithFallbackProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src' | 'alt' | 'onError'> {
   src: string;
   alt: string;
-  className?: string;
-  onError?: () => void;
+  onError?: (event: React.SyntheticEvent<HTMLImageElement, Event>) => void;
 }
 
-export function ImageWithFallback({ src, alt, className, onError }: ImageWithFallbackProps) {
-  const [hasError, setHasError] = React.useState(false);
+export const ImageWithFallback = React.forwardRef<HTMLImageElement, ImageWithFallbackProps>(
+  ({ src, alt, className, onError, ...rest }, ref) => {
+    const [hasError, setHasError] = React.useState(false);
 
-  const handleError = () => {
-    setHasError(true);
-    onError?.();
-  };
+    React.useEffect(() => {
+      // Reset error state when src changes
+      setHasError(false);
+    }, [src]);
 
-  if (hasError) {
+    const handleError = (event: React.SyntheticEvent<HTMLImageElement, Event>) => {
+      setHasError(true);
+      onError?.(event);
+    };
+
+    if (hasError) {
+      return (
+        <div
+          className={`bg-muted flex items-center justify-center text-muted-foreground text-sm ${className || ''}`}
+          role="img"
+          aria-label={alt}
+        >
+          {alt}
+        </div>
+      );
+    }
+
     return (
-      <div
-        className={`bg-muted flex items-center justify-center text-muted-foreground text-sm ${className || ''}`}
-        role="img"
-        aria-label={alt}
-      >
-        {alt}
-      </div>
+      <img
+        ref={ref}
+        src={src}
+        alt={alt}
+        className={className}
+        onError={handleError}
+        {...rest}
+      />
     );
   }
+);
 
-  return (
-    <img
-      src={src}
-      alt={alt}
-      className={className}
-      onError={handleError}
-    />
-  );
-}
+ImageWithFallback.displayName = 'ImageWithFallback';

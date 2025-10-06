@@ -91,6 +91,17 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
   const [isOwner, setIsOwner] = useState(false);
   const [modalMembers, setModalMembers] = useState<{ id: string; name: string; avatar: string }[]>([]);
 
+  // Helper to transform GroupMember objects for modals
+  const transformMembersForModal = (members: GroupMember[]): { id: string; name: string; avatar: string }[] => {
+    return members
+      .filter(m => m.status === 'active')
+      .map(m => ({
+        id: m.user_id,
+        name: m.profile?.full_name || 'Unknown',
+        avatar: (m.profile?.full_name || 'UN').substring(0, 2).toUpperCase()
+      }));
+  };
+
   // Fetch group details on component mount
   useEffect(() => {
     fetchGroupDetails();
@@ -243,11 +254,7 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
     } catch (e) {
       // Fallback to existing group members if RPC fails
       if (group) {
-        setModalMembers(group.members.filter(m => m.status === 'active').map(m => ({
-          id: m.user_id,
-          name: m.profile?.full_name || 'Unknown',
-          avatar: m.profile?.full_name?.substring(0, 2).toUpperCase() || 'UN'
-        })));
+        setModalMembers(transformMembersForModal(group.members));
       }
     } finally {
       setShowAddExpense(true);
@@ -296,25 +303,25 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
     if (!group) return;
 
     try {
-      let error = null as any;
+      let error: { message: string; code?: string } | null = null;
 
       if (member.status === 'pending' && member.invitation?.invitee_email) {
         // Cancel a pending invitation instead of trying to remove a non-existent membership
-        const res = await supabase
+        const { error: deleteError } = await supabase
           .from('invitations')
           .delete()
           .eq('group_id', group.id)
           .eq('invitee_email', member.invitation.invitee_email)
           .eq('status', 'pending');
-        error = res.error;
+        error = deleteError;
       } else {
         // Remove an active member by group_id + user_id (not by synthetic id)
-        const res = await supabase
+        const { error: deleteError } = await supabase
           .from('group_members')
           .delete()
           .eq('group_id', group.id)
           .eq('user_id', member.user_id);
-        error = res.error;
+        error = deleteError;
       }
 
       if (error) throw error;
@@ -708,11 +715,7 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
       <AddExpenseModal
         isOpen={showAddExpense}
         onClose={() => setShowAddExpense(false)}
-        groupMembers={(modalMembers && modalMembers.length > 0) ? modalMembers : group.members.filter(m => m.status === 'active').map(m => ({
-          id: m.user_id,
-          name: m.profile?.full_name || 'Unknown',
-          avatar: m.profile?.full_name?.substring(0, 2).toUpperCase() || 'UN'
-        }))}
+        groupMembers={(modalMembers && modalMembers.length > 0) ? modalMembers : (group ? transformMembersForModal(group.members) : [])}
         currentUser={currentUser}
         groupId={group.id}
         onExpenseCreated={handleExpenseCreated}
@@ -724,11 +727,7 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
         group={{
           id: group.id,
           name: group.name,
-          members: group.members.filter(m => m.status === 'active').map(m => ({
-            id: m.user_id,
-            name: m.profile?.full_name || 'Unknown',
-            avatar: m.profile?.full_name?.substring(0, 2).toUpperCase() || 'UN'
-          }))
+          members: transformMembersForModal(group.members)
         }}
         onSettleUp={() => {
           // Sync group view after a successful settlement

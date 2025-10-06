@@ -1,4 +1,5 @@
 // Global type declarations for Figma assets
+// UI component module declarations are in ui-components.d.ts
 
 declare module '*.svg' {
   import React = require('react');
@@ -25,13 +26,4 @@ declare module '*.jpeg' {
 declare module '*.gif' {
   const value: string;
   export default value;
-}
-
-declare module 'sonner' {
-  export * from 'sonner';
-}
-
-declare module '@/components/ui/sonner' {
-  import { Toaster, ToasterProps } from 'sonner';
-  export { Toaster, ToasterProps };
 }
