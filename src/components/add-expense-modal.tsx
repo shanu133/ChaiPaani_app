@@ -108,42 +108,24 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, gr
 
   const handleMemberToggle = (memberId: string) => {
     // For 2-person groups, don't allow deselection of the required members
-    // Only allow toggling if there are more than 2 members in the group
     if (groupMembers.length <= 2) {
-// Add at the top of your component (ensure React.useState is imported)
-const [error, setError] = useState("");
+      return; // keep both members selected
+    }
+    setFormData(prev => {
+      const selected = new Set(prev.selectedMembers);
+      if (selected.has(memberId)) selected.delete(memberId); else selected.add(memberId);
+      return { ...prev, selectedMembers: selected };
+    });
+  };
 
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setError("");
-
-  // Validate form
-  if (!formData.description.trim() || !formData.amount || formData.selectedMembers.size === 0) {
-    setError("Please fill in all required fields");
-    return;
-  }
-
-  // Validate groupId is a UUID before calling API
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  if (!groupId || !uuidRegex.test(groupId)) {
-    setError("Invalid or missing group ID. Please select a valid group.");
-    return;
-  }
-
-  // Validate amount
-  const totalAmount = parseFloat(formData.amount);
-  if (isNaN(totalAmount) || totalAmount <= 0) {
-    setError("Please enter a valid amount");
-    return;
-  }
-
-  // ...rest of your submit logic
-};    e.preventDefault();
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setSubmitError(null);
 
     // Validate form
     if (!formData.description.trim() || !formData.amount || formData.selectedMembers.size === 0) {
       console.error("Please fill in all required fields");
+      setSubmitError("Please fill in all required fields");
       return;
     }
 
@@ -162,16 +144,11 @@ const handleSubmit = async (e: React.FormEvent) => {
     }
 
     // Calculate splits
-    const selectedMembersList = Array.from(formData.selectedMembers);
-      // Validate custom splits add up to total
-      if (Math.abs(totalSplitAmount - totalAmount) > FLOAT_TOLERANCE) {
-        setError(`Custom split amounts (₹${totalSplitAmount.toFixed(2)}) must equal the total expense amount (₹${totalAmount.toFixed(2)})`);
-        return;
-      }      const splitAmount = totalAmount / selectedMembersList.length;
-      splits = selectedMembersList.map(memberId => ({
-        user_id: memberId,
-        amount: splitAmount
-      }));
+  const selectedMembersList = Array.from(formData.selectedMembers);
+  let splits: { user_id: string; amount: number }[] = [];
+    if (formData.splitMethod === 'equally') {
+      const splitAmount = totalAmount / selectedMembersList.length;
+      splits = selectedMembersList.map(memberId => ({ user_id: memberId, amount: splitAmount }));
     } else {
       // Custom amounts
       let totalSplitAmount = 0;
@@ -187,6 +164,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       // Validate custom splits add up to total
       if (Math.abs(totalSplitAmount - totalAmount) > FLOAT_TOLERANCE) {
         console.error("Custom split amounts must equal the total expense amount");
+        setSubmitError(`Custom split amounts (₹${totalSplitAmount.toFixed(2)}) must equal the total expense amount (₹${totalAmount.toFixed(2)})`);
         return;
       }
     }

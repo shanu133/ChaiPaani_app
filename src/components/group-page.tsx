@@ -18,7 +18,6 @@ import {
   Settings,
   LogOut,
   IndianRupee,
-  
   Menu,
   X,
   ArrowLeft,
@@ -49,17 +48,15 @@ interface GroupMember {
   profile?: {
     id: string;
     full_name: string;
-    display_name: string;
+    display_name: string | null;
     email: string;
-    avatar_url?: string;
+    avatar_url?: string | null;
   };
   invitation?: {
-    id: string;
-    token: string;
+    invitee_email: string;
     status: string;
     created_at: string;
-    invitee_email: string;
-  };
+  } | null;
 }
 
 interface GroupDetails {
@@ -71,137 +68,78 @@ interface GroupDetails {
   created_at: string;
   created_by: string;
   members: GroupMember[];
+}
+
 interface Expense {
   id: string;
   description: string;
   amount: number;
-  payer?: {
-    full_name?: string;
-  };
+  payer?: { full_name?: string } | null;
   created_at: string;
-  // Add other expense fields as needed
 }
 
-interface GroupDetails {
-  id: string;
-  name: string;
-  description: string | null;
-  category: string;
-  currency: string;
-  created_at: string;
-  created_by: string;
-  members: GroupMember[];
+interface GroupView extends GroupDetails {
   expenses: Expense[];
   totalExpenses: number;
-  userBalance: number;
-}  totalExpenses: number;
   userBalance: number;
 }
 
 export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showAddExpense, setShowAddExpense] = useState(false);
-  // const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showSettleUp, setShowSettleUp] = useState(false);
   const [showAddMembers, setShowAddMembers] = useState(false);
   const [showEditGroup, setShowEditGroup] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
-  const [group, setGroup] = useState<GroupDetails | null>(null);
+  const [group, setGroup] = useState<GroupView | null>(null);
   const [loading, setLoading] = useState(true);
-// define the CurrentUser interface (e.g. at the top of the file)
-interface CurrentUser {
-  id: string;
-  name: string;
-  avatar: string;
-}
 
-// …
-
-  // replace `any` with the new interface (allowing null initial state)
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);  const [isOwner, setIsOwner] = useState(false);
+  interface CurrentUser { id: string; name: string; avatar: string; }
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
   const [modalMembers, setModalMembers] = useState<{ id: string; name: string; avatar: string }[]>([]);
 
-  // Fetch group details on component mount
-  useEffect(() => {
-    fetchGroupDetails();
-    fetchCurrentUser();
-  }, [groupId]);
+  const isValidMemberStatus = (status: any): status is 'active' | 'pending' | 'inactive' =>
+    status === 'active' || status === 'pending' || status === 'inactive';
 
-function isValidMemberStatus(status: any): status is 'active' | 'pending' | 'inactive' {
-  return status === 'active' || status === 'pending' || status === 'inactive';
-}
-
-          let status: 'active' | 'pending' | 'inactive' =
-            isValidMemberStatus(member.status) ? member.status : 'active';
-          let invitation = member.invitation || null;      // Get group details with members and expenses
+  const fetchGroupDetails = async () => {
+    setLoading(true);
+    try {
       const { data: groupData, error: groupError } = await groupService.getGroupDetails(groupId);
-
-      if (groupError) {
+      if (groupError || !groupData) {
         console.error("Error fetching group details:", groupError);
-        console.error("Failed to load group details");
-        setGroup(null); // This will trigger the "Group Not Found" UI
+        setGroup(null);
         setLoading(false);
         return;
       }
 
-      if (!groupData) {
-        console.error("Group not found");
-        setGroup(null); // This will trigger the "Group Not Found" UI
-        setLoading(false);
-        return;
-      }
-
-      // Get current user to determine ownership
-      // Get current user to determine ownership
-      // Wait for currentUser to be set or fetch if not available
       const userId = currentUser?.id || (await authService.getCurrentUser())?.id;
-      const isGroupOwner = groupData.created_by === userId;
-      setIsOwner(isGroupOwner);
-      // Transform members data to include invitation status
+      setIsOwner(!!userId && groupData.created_by === userId);
+
       const transformedMembers: GroupMember[] = await Promise.all(
         (groupData.group_members || []).map(async (member: any) => {
-          // Prefer status provided by backend service (RPC), else infer
-          let status: 'active' | 'pending' | 'inactive' = (member.status as any) || 'active';
+          let status: 'active' | 'pending' | 'inactive' = isValidMemberStatus(member.status) ? member.status : 'active';
           let invitation = member.invitation || null;
 
-          if (!status) status = 'active';
-
-          // If status not provided and no profile, attempt to detect pending invite
-          if (status === 'active' && !member.profiles) {
+          if (status === 'active' && !member.profiles && member.email) {
             try {
               const { data: invites } = await supabase
                 .from('invitations')
                 .select('*')
                 .eq('group_id', groupId)
-                .eq('invitee_email', member.email || '')
+                .eq('invitee_email', member.email)
                 .eq('status', 'pending')
                 .single();
               if (invites) {
                 status = 'pending';
                 invitation = invites;
-              } else {
-                status = 'inactive';
-interface BalanceData {
-  net_balance?: number;
-  amount_owed?: number;
-  amount_owes?: number;
-}
+              }
+            } catch {}
+          }
 
-try {
-  const { data: balanceData } = await expenseService.getUserBalance(groupId);
-  if (Array.isArray(balanceData) && balanceData.length > 0) {
-    const first = balanceData[0] as BalanceData;
-    // Prefer computed net_balance if available; otherwise derive if amount fields exist
-    if (typeof first.net_balance === 'number') {
-      userBalance = first.net_balance;
-    } else if (typeof first.amount_owed === 'number' && typeof first.amount_owes === 'number') {
-      userBalance = first.amount_owed - first.amount_owes;
-    }
-  }
-} catch (error) {
-  // handle error
-}            id: member.id,
+          return {
+            id: member.id,
             user_id: member.user_id,
             role: member.role,
             joined_at: member.joined_at,
@@ -214,28 +152,25 @@ try {
               avatar_url: member.profiles.avatar_url
             } : undefined,
             invitation
-          };
+          } as GroupMember;
         })
       );
 
-      // Calculate total expenses
-      const totalExpenses = (groupData.expenses || []).reduce((sum: number, expense: any) => sum + expense.amount, 0);
+      const expenses: Expense[] = (groupData.expenses || []) as Expense[];
+      const totalExpenses = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
-      // Calculate user's balance
       let userBalance = 0;
       try {
         const { data: balanceData } = await expenseService.getUserBalance(groupId);
         if (Array.isArray(balanceData) && balanceData.length > 0) {
-          const first: any = balanceData[0] as any;
-          // Prefer computed net_balance if available; otherwise derive if amount fields exist
-          if (typeof first.net_balance === 'number') {
-            userBalance = first.net_balance;
-          } else if (typeof first.amount_owed === 'number' && typeof first.amount_owes === 'number') {
+          const first: any = balanceData[0];
+          if (typeof first.net_balance === 'number') userBalance = first.net_balance;
+          else if (typeof first.amount_owed === 'number' && typeof first.amount_owes === 'number') {
             userBalance = (first.amount_owed as number) - (first.amount_owes as number);
           }
         }
-      } catch (error) {
-        console.error(`Error fetching balance for group ${groupId}:`, error);
+      } catch (e) {
+        console.error(`Error fetching balance for group ${groupId}:`, e);
       }
 
       setGroup({
@@ -247,28 +182,29 @@ try {
         created_at: groupData.created_at,
         created_by: groupData.created_by,
         members: transformedMembers,
-        expenses: groupData.expenses || [],
+        expenses,
         totalExpenses,
         userBalance
       });
-
     } catch (error) {
       console.error("Error fetching group details:", error);
-      console.error("Failed to load group details");
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    fetchGroupDetails();
+    fetchCurrentUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId]);
+
   const fetchCurrentUser = async () => {
     try {
       const user = await authService.getCurrentUser();
       if (user) {
-        setCurrentUser({
-          id: user.id,
-          name: user.user_metadata?.full_name || user.email || "You",
-          avatar: (user.user_metadata?.full_name || user.email || "You").substring(0, 2).toUpperCase()
-        });
+        const name = user.user_metadata?.full_name || user.email || "You";
+        setCurrentUser({ id: user.id, name, avatar: name.substring(0, 2).toUpperCase() });
       }
     } catch (error) {
       console.error("Error fetching current user:", error);
