@@ -26,14 +26,7 @@ jobs:
       pull-requests: write
     steps:
       - name: CodeRabbit
-        # Pin to a stable tag or, preferably, a commit SHA
         uses: coderabbitai/ai-pr-reviewer@latest
-        # uses: coderabbitai/ai-pr-reviewer@<commit-sha>
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}      - name: CodeRabbit
-        uses: coderabbitai/ai-pr-reviewer@v1
-        # uses: coderabbitai/ai-pr-reviewer@<commit-sha>
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

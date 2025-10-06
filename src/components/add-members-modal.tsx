@@ -15,6 +15,23 @@ function buildInviteLink(token?: string | null): string | null {
   return `${base}/#token=${encodeURIComponent(token)}`;
 }
 
+// Reusable helper for copying text to clipboard with fallback
+async function copyToClipboard(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    alert("Invite link copied");
+  } catch {
+    // Fallback for older browsers
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    alert("Invite link copied");
+  }
+}
+
 interface AddMembersModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -28,6 +45,8 @@ interface AddMembersModalProps {
 export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddMembersModalProps) {
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberEmail, setNewMemberEmail] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [emailError, setEmailError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [lastInviteToken, setLastInviteToken] = useState<string | null>(null);
   const [lastInviteEmail, setLastInviteEmail] = useState<string | null>(null);
@@ -64,19 +83,25 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
   }, [group?.id, isOpen])
 
   const addMember = async () => {
+    // Clear previous errors
+    setNameError("");
+    setEmailError("");
+
+    // Validate name
     if (!newMemberName.trim()) {
-      console.error("Please enter member name");
+      setNameError("Please enter member name");
       return;
     }
 
+    // Validate email
     if (!newMemberEmail.trim()) {
-      console.error("Please enter member email");
+      setEmailError("Please enter member email");
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(newMemberEmail)) {
-      console.error("Please enter a valid email address");
+      setEmailError("Please enter a valid email address");
       return;
     }
 
@@ -84,7 +109,8 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
     try {
       if (!group?.id) {
-        console.error("Group ID is missing");
+        alert("Group ID is missing");
+        setIsLoading(false);
         return;
       }
 
@@ -113,13 +139,16 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
       setNewMemberName("");
       setNewMemberEmail("");
+      setNameError("");
+      setEmailError("");
   onMembersAdded();
   // Update local pending list
   setPendingInvites(prev => [{ id: crypto.randomUUID?.() || String(Date.now()), email: newMemberEmail.trim().toLowerCase(), created_at: new Date().toISOString(), token: inviteData.token }, ...prev])
 
     } catch (error) {
       console.error("Error in addMember:", error);
-      console.error("Failed to add member. Please try again.");
+      const message = (error as any)?.message || "Unknown error";
+      alert(`Failed to add member: ${message}`);
     } finally {
       setIsLoading(false);
     }
@@ -129,6 +158,8 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
     if (!isLoading) {
       setNewMemberName("");
       setNewMemberEmail("");
+      setNameError("");
+      setEmailError("");
       setLastInviteToken(null);
       setLastInviteEmail(null);
       onClose();
@@ -154,23 +185,38 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
             <div className="space-y-2">
               <Label>Add New Member</Label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <Input
-                  placeholder="Member name"
-                  value={newMemberName}
-                  onChange={(e) => setNewMemberName(e.target.value)}
-                  disabled={isLoading}
-                  onKeyPress={(e) => e.key === 'Enter' && addMember()}
-                />
-                <div className="flex gap-2">
+                <div>
                   <Input
-                    placeholder="Email address"
-                    type="email"
-                    value={newMemberEmail}
-                    onChange={(e) => setNewMemberEmail(e.target.value)}
+                    placeholder="Member name"
+                    value={newMemberName}
+                    onChange={(e) => {
+                      setNewMemberName(e.target.value);
+                      if (nameError) setNameError("");
+                    }}
                     disabled={isLoading}
-                    className="flex-1"
                     onKeyPress={(e) => e.key === 'Enter' && addMember()}
                   />
+                  {nameError && (
+                    <p className="text-xs text-red-600 mt-1">{nameError}</p>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <Input
+                      placeholder="Email address"
+                      type="email"
+                      value={newMemberEmail}
+                      onChange={(e) => {
+                        setNewMemberEmail(e.target.value);
+                        if (emailError) setEmailError("");
+                      }}
+                      disabled={isLoading}
+                      onKeyPress={(e) => e.key === 'Enter' && addMember()}
+                    />
+                    {emailError && (
+                      <p className="text-xs text-red-600 mt-1">{emailError}</p>
+                    )}
+                  </div>
                   <Button
                     size="sm"
                     onClick={addMember}
@@ -197,21 +243,7 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(inviteLink);
-                      alert("Invite link copied");
-                    } catch {
-                      // Fallback
-                      const textarea = document.createElement('textarea');
-                      textarea.value = inviteLink;
-                      document.body.appendChild(textarea);
-                      textarea.select();
-                      document.execCommand('copy');
-                      document.body.removeChild(textarea);
-                      alert("Invite link copied");
-                    }
-                  }}
+                  onClick={() => copyToClipboard(inviteLink)}
                 >
                   Copy
                 </Button>
@@ -239,20 +271,7 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
                         <Button
                           type="button"
                           variant="outline"
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(link)
-                              alert('Invite link copied')
-                            } catch {
-                              const textarea = document.createElement('textarea');
-                              textarea.value = link;
-                              document.body.appendChild(textarea);
-                              textarea.select();
-                              document.execCommand('copy');
-                              document.body.removeChild(textarea);
-                              alert('Invite link copied')
-                            }
-                          }}
+                          onClick={() => copyToClipboard(link)}
                         >
                           Copy link
                         </Button>

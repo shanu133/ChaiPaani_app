@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -38,32 +38,22 @@ export function SettleUpModal({ isOpen, onClose, group, onSettleUp }: SettleUpMo
   const [amount, setAmount] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [memberBalances, setMemberBalances] = useState<Record<string, number>>({});
-  const [loadingBalances, setLoadingBalances] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
-  // Fetch current user and balances when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      fetchCurrentUser();
-      if (group?.id) {
-        fetchMemberBalances();
-      }
-    }
-  }, [isOpen, group?.id]);
-
-  const fetchCurrentUser = async () => {
+  // Stable callback for fetching current user
+  const fetchCurrentUser = useCallback(async () => {
     try {
       const user = await authService.getCurrentUser();
       setCurrentUser(user);
     } catch (error) {
       console.error("Error fetching current user:", error);
     }
-  };
+  }, []);
 
-  const fetchMemberBalances = async () => {
+  // Stable callback for fetching member balances
+  const fetchMemberBalances = useCallback(async () => {
     if (!group?.id) return;
 
-    setLoadingBalances(true);
     try {
       console.log(`Fetching balances for group ${group.id}`);
       const { data, error } = await expenseService.getUserBalance(group.id);
@@ -85,10 +75,16 @@ export function SettleUpModal({ isOpen, onClose, group, onSettleUp }: SettleUpMo
     } catch (error) {
       console.error("Error fetching member balances:", error);
       toast.error("Failed to load balances");
-    } finally {
-      setLoadingBalances(false);
     }
-  };
+  }, [group?.id]);
+
+  // Fetch current user and balances when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchCurrentUser();
+      fetchMemberBalances();
+    }
+  }, [isOpen, fetchCurrentUser, fetchMemberBalances]);
 
   const getCurrentUserBalance = () => {
     return currentUser ? memberBalances[currentUser.id] || 0 : 0;

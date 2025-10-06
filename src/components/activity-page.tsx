@@ -137,26 +137,47 @@ export function ActivityPage({ onBack, onLogoClick }: ActivityPageProps) {
       }
 
       if (data) {
+        // Helper to map incoming activity type/fields to ActivityItem['type']
+        const mapActivityType = (activity: any): ActivityItem['type'] => {
+          const typeField = (activity.type || activity.action || '').toLowerCase();
+          const descField = (activity.description || '').toLowerCase();
+          
+          // Map based on type/action field or description keywords
+          if (typeField.includes('settlement') || descField.includes('settlement')) return 'settlement_completed';
+          if (typeField.includes('payment') || typeField === 'paid') return 'payment_made';
+          if (typeField.includes('member_left') || typeField === 'left') return 'member_left';
+          if (typeField.includes('member_join') || typeField === 'joined' || typeField.includes('invite_accept')) return 'member_joined';
+          if (typeField.includes('group_create')) return 'group_created';
+          if (typeField.includes('expense_updated') || (typeField === 'update' && descField.includes('expense'))) return 'expense_updated';
+          
+          // Default to expense_added for general expense records
+          return 'expense_added';
+        };
+
         // Transform Supabase data to match our ActivityItem interface
-        const transformedActivities: ActivityItem[] = data.map((activity: any) => ({
-          id: activity.id,
-          type: 'expense_added' as ActivityItem['type'], // Default to expense_added for now
-          title: activity.payer.isCurrentUser ? 'You added an expense' : `${activity.payer.name} added an expense`,
-          description: `${activity.payer.name} added "${activity.description}" for ₹${activity.amount}`,
-          timestamp: new Date(activity.created_at),
-          user: {
-            name: activity.payer.name,
-            avatar: activity.payer.name.substring(0, 1).toUpperCase()
-          },
-          group: {
-            name: activity.group.name,
-            id: activity.group.id
-          },
-          metadata: {
-            amount: activity.amount,
-            expenseTitle: activity.description
-          }
-        }));
+        const transformedActivities: ActivityItem[] = data.map((activity: any) => {
+          const activityType = mapActivityType(activity);
+          
+          return {
+            id: activity.id,
+            type: activityType,
+            title: activity.payer.isCurrentUser ? 'You added an expense' : `${activity.payer.name} added an expense`,
+            description: `${activity.payer.name} added "${activity.description}" for ₹${activity.amount}`,
+            timestamp: new Date(activity.created_at),
+            user: {
+              name: activity.payer.name,
+              avatar: activity.payer.name.substring(0, 1).toUpperCase()
+            },
+            group: {
+              name: activity.group.name,
+              id: activity.group.id
+            },
+            metadata: {
+              amount: activity.amount,
+              expenseTitle: activity.description
+            }
+          };
+        });
 
         setActivities(transformedActivities);
       }

@@ -31,6 +31,60 @@ import {
 } from "lucide-react";
 import { groupService, expenseService, authService } from "../lib/supabase-service";
 
+// Explicit type interfaces
+interface AuthUser {
+  id: string;
+  email?: string;
+  user_metadata?: {
+    full_name?: string;
+  };
+}
+
+interface GroupMemberBasic {
+  user_id: string;
+  role?: string;
+  status?: string;
+}
+
+interface Group {
+  id: string;
+  name: string;
+  group_members?: GroupMemberBasic[];
+}
+
+interface ExpenseSplit {
+  user_id: string;
+  amount: number;
+}
+
+interface Expense {
+  id: string;
+  description: string;
+  amount: number;
+  created_at: string;
+  payer: string;
+  group: {
+    id: string;
+    name: string;
+  };
+  expense_splits: ExpenseSplit[];
+}
+
+interface BalanceItem {
+  amount: number;
+  user_id?: string;
+  group_id?: string;
+}
+
+interface RpcGroupMember {
+  user_id: string;
+  display_name: string;
+  status: string;
+}
+
+// Constants
+const GROUP_MEMBER_STATUS_ACTIVE = 'active';
+
 interface DashboardProps {
   onLogout: () => void;
   onGoToGroups?: () => void;
@@ -56,18 +110,13 @@ export function Dashboard({
   const [modalGroupMembers, setModalGroupMembers] = useState<{ id: string; name: string; avatar: string }[]>([]);
   const [modalGroupId, setModalGroupId] = useState<string | null>(null);
 
-  // Real data state
-  interface BalanceItem {
-    amount: number;
-    [key: string]: any; // Add more fields as needed
-  }
-
-  const [groups, setGroups] = useState<any[]>([]);
-  const [recentExpenses, setRecentExpenses] = useState<any[]>([]);
-  const [userBalance, setUserBalance] = useState({ owed: 0, owes: 0, net: 0 });
+  // Real data state with explicit types
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [recentExpenses, setRecentExpenses] = useState<Expense[]>([]);
+  const [userBalance, setUserBalance] = useState<{ owed: number; owes: number; net: number }>({ owed: 0, owes: 0, net: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
 
   // Data fetching functions
   const fetchDashboardData = async () => {
@@ -77,17 +126,17 @@ export function Dashboard({
 
       // Get current user
       const user = await authService.getCurrentUser();
-      setCurrentUser(user);
+      setCurrentUser(user as AuthUser | null);
 
       // Fetch user groups
       const { data: groupsData, error: groupsError } = await groupService.getUserGroups();
       if (groupsError) throw groupsError;
-      setGroups(groupsData || []);
+      setGroups((groupsData || []) as unknown as Group[]);
 
       // Fetch recent expenses
       const { data: expensesData, error: expensesError } = await expenseService.getRecentExpenses(10);
       if (expensesError) throw expensesError;
-      setRecentExpenses(expensesData || []);
+      setRecentExpenses((expensesData || []) as unknown as Expense[]);
 
       // Fetch user balance
       const { data: balanceData, error: balanceError } = await expenseService.getUserBalance();
@@ -96,9 +145,9 @@ export function Dashboard({
       // Normalize balanceData to array if needed
       let balances: BalanceItem[] = [];
       if (Array.isArray(balanceData)) {
-        balances = balanceData as BalanceItem[];
+        balances = balanceData as unknown as BalanceItem[];
       } else if (balanceData && typeof balanceData === "object") {
-        balances = [balanceData as BalanceItem];
+        balances = [balanceData as unknown as BalanceItem];
       }
 
       // Calculate balance summary
@@ -137,20 +186,41 @@ if (balances.length > 0) {
       setModalGroupId(gid);
       setModalGroupMembers([]);
       const { data, error } = await groupService.getGroupMembersWithStatus(gid);
-      if (!error && Array.isArray(data)) {
-        const actives = data
-          .filter((m: any) => m.status === 'active')
-          .map((m: any) => ({
-            id: m.user_id,
-            name: m.display_name,
-            avatar: (m.display_name || 'UN').substring(0, 2).toUpperCase()
-          }));
-        setModalGroupMembers(actives);
+      
+      if (error) {
+        setError('Failed to fetch group members');
+        return;
       }
-    } catch (e) {
-      console.warn('Could not fetch members for Add Expense modal:', e);
-    } finally {
+      
+      if (!Array.isArray(data)) {
+        setError('Invalid group members data');
+        return;
+      }
+      
+      // Validate and map members
+      const actives = (data as RpcGroupMember[])
+        .filter((m) => {
+          // Validate required fields
+          if (!m.user_id || typeof m.user_id !== 'string') return false;
+          if (!m.display_name || typeof m.display_name !== 'string') return false;
+          return m.status === GROUP_MEMBER_STATUS_ACTIVE;
+        })
+        .map((m) => ({
+          id: m.user_id,
+          name: m.display_name, // Already validated as non-empty string
+          avatar: m.display_name.substring(0, 2).toUpperCase()
+        }));
+      
+      if (actives.length === 0) {
+        setError('No active members found in this group');
+        return;
+      }
+      
+      setModalGroupMembers(actives);
       setIsAddExpenseModalOpen(true);
+    } catch (e) {
+      console.error('Could not fetch members for Add Expense modal:', e);
+      setError('Failed to open Add Expense modal');
     }
   };
 

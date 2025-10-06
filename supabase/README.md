@@ -122,7 +122,20 @@ SELECT * FROM get_user_balance_in_group('group-uuid'::UUID);
 ### Migration Issues
 If migrations fail, you can reset the database:
 
+⚠️ **WARNING: `npx supabase db reset` is DESTRUCTIVE and will permanently delete ALL data!**
+
+**NEVER run this against production databases!** Always verify your environment/database target first.
+
+Before running reset:
+- Create a backup: `npx supabase db dump -f backup.sql`
+- Verify you're targeting the correct database (local/dev only)
+- Consider safer alternatives:
+  - Fix and re-run specific migrations (make them idempotent where possible)
+  - Use a local/dev-only environment for testing
+  - Restore from a dump if recovery is needed
+
 ```bash
+# ONLY FOR LOCAL/DEV - verify first!
 npx supabase db reset
 ```
 
@@ -141,7 +154,53 @@ Check the Supabase logs in your dashboard for detailed error messages.
 
 ## Security Notes
 
-- All database functions use `SECURITY DEFINER` to run with elevated privileges
+⚠️ **SECURITY DEFINER Functions - Critical Security Considerations**
+
+All database functions use `SECURITY DEFINER` to run with elevated privileges (the function owner's permissions). This has important security implications:
+
+### Why SECURITY DEFINER is risky:
+- Functions bypass the caller's permissions and run with the definer's (owner's) privileges
+- This can enable **privilege escalation** if not properly secured
+- SQL injection or logic errors have wider impact since the function runs with elevated access
+- RLS policies on tables may be bypassed by the owner (unless `FORCE ROW LEVEL SECURITY` is set)
+
+### Required Mitigations:
+1. **Strict Input Validation**:
+   - Validate all input types, UUIDs, ranges, and JSON shapes
+   - Use parameterized queries; NEVER concatenate user input into SQL strings
+   - Sanitize and whitelist allowed values
+
+2. **Explicit Authorization Checks**:
+   - Always verify `auth.uid()` matches the resource owner
+   - Use joins to verify membership/ownership before allowing operations
+   - Don't rely solely on RLS; enforce access checks explicitly in function logic
+
+3. **Least Privilege**:
+   - Set `search_path` to a safe schema to prevent function hijacking
+   - Consider using `SECURITY INVOKER` when elevated privileges aren't needed
+   - Use the least-privileged role as the function owner
+   - Consider `ALTER TABLE ... FORCE ROW LEVEL SECURITY` for sensitive tables
+
+4. **RLS Interaction**:
+   - Table owners can bypass RLS unless FORCE RLS is enabled
+   - Treat SECURITY DEFINER functions as privileged entry points
+   - Functions should perform their own authorization checks, not rely on RLS alone
+
+### Validation/Access Control Checklist for SECURITY DEFINER Functions:
+- [ ] Validate all input parameters (types, ranges, formats)
+- [ ] Check `auth.uid()` and verify caller is authorized
+- [ ] Verify ownership or membership via explicit JOINs/EXISTS checks
+- [ ] Use parameterized queries; avoid string concatenation
+- [ ] Set explicit `search_path` if calling other functions
+- [ ] Log security-relevant actions for audit trail
+- [ ] Consider FORCE RLS for sensitive tables
+- [ ] Test with different user roles to verify access controls
+
+### References:
+- [PostgreSQL SECURITY DEFINER documentation](https://www.postgresql.org/docs/current/sql-createfunction.html)
+- [Supabase Row Level Security guide](https://supabase.com/docs/guides/auth/row-level-security)
+- [PostgreSQL security best practices](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
+
 - RLS policies ensure data isolation between users
 - Authentication is handled by Supabase Auth
 - All user inputs are validated before database operations
