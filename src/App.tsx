@@ -9,6 +9,7 @@ const ActivityPage = lazy(() => import("./components/activity-page").then(m => (
 const SettingsPage = lazy(() => import("./components/settings-page").then(m => ({ default: m.SettingsPage })));
 import { Toaster } from "./components/ui/sonner";
 import { authService, invitationService } from "./lib/supabase-service";
+import { toast } from "sonner";
 
 type AppView = "landing" | "auth" | "dashboard" | "groups" | "group" | "notifications" | "activity" | "settings";
 
@@ -70,9 +71,6 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, []);
-
-// At the top of the file with your other imports
-import { toast } from "sonner";
 
   // When authenticated and we have a pending invite token, accept it once
   useEffect(() => {
