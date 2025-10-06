@@ -87,25 +87,9 @@ export default function App() {
           toast.success("Joined group successfully");
         }
       } catch (e) {
-        try {
-          const error = await acceptInvite();
-          if (error) {
-            console.error("Failed to accept invite token:", error);
-            toast.error((error as any)?.message || "Failed to join group from invitation");
-            // Only clear token on non-retryable errors
-            if ((error as any)?.statusCode === 404 || (error as any)?.statusCode === 410) {
-              sessionStorage.removeItem("invite_token");
-              setPendingInviteToken(null);
-            }
-          } else {
-            toast.success("Joined group successfully");
-            sessionStorage.removeItem("invite_token");
-            setPendingInviteToken(null);
-          }
-        } catch (e) {
-          console.error("Error accepting invite token:", e);
-          toast.error("Unable to accept invitation");
-        }      } finally {
+        console.error("Error accepting invite token:", e);
+        toast.error("Unable to accept invitation");
+      } finally {
         sessionStorage.removeItem("invite_token");
         setPendingInviteToken(null);
       }
