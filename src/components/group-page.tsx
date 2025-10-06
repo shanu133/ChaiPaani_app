@@ -62,15 +62,6 @@ interface GroupMember {
   };
 }
 
-interface GroupDetails {
-  id: string;
-  name: string;
-  description: string | null;
-  category: string;
-  currency: string;
-  created_at: string;
-  created_by: string;
-  members: GroupMember[];
 interface Expense {
   id: string;
   description: string;
@@ -93,8 +84,6 @@ interface GroupDetails {
   members: GroupMember[];
   expenses: Expense[];
   totalExpenses: number;
-  userBalance: number;
-}  totalExpenses: number;
   userBalance: number;
 }
 
@@ -128,13 +117,14 @@ interface CurrentUser {
     fetchCurrentUser();
   }, [groupId]);
 
-function isValidMemberStatus(status: any): status is 'active' | 'pending' | 'inactive' {
-  return status === 'active' || status === 'pending' || status === 'inactive';
-}
+  function isValidMemberStatus(status: any): status is 'active' | 'pending' | 'inactive' {
+    return status === 'active' || status === 'pending' || status === 'inactive';
+  }
 
-          let status: 'active' | 'pending' | 'inactive' =
-            isValidMemberStatus(member.status) ? member.status : 'active';
-          let invitation = member.invitation || null;      // Get group details with members and expenses
+  const fetchGroupDetails = async () => {
+    try {
+      setLoading(true);
+      // Get group details with members and expenses
       const { data: groupData, error: groupError } = await groupService.getGroupDetails(groupId);
 
       if (groupError) {
@@ -182,26 +172,15 @@ function isValidMemberStatus(status: any): status is 'active' | 'pending' | 'ina
                 invitation = invites;
               } else {
                 status = 'inactive';
-interface BalanceData {
-  net_balance?: number;
-  amount_owed?: number;
-  amount_owes?: number;
-}
+              }
+            } catch (error) {
+              console.error('Error checking invitation status:', error);
+              status = 'inactive';
+            }
+          }
 
-try {
-  const { data: balanceData } = await expenseService.getUserBalance(groupId);
-  if (Array.isArray(balanceData) && balanceData.length > 0) {
-    const first = balanceData[0] as BalanceData;
-    // Prefer computed net_balance if available; otherwise derive if amount fields exist
-    if (typeof first.net_balance === 'number') {
-      userBalance = first.net_balance;
-    } else if (typeof first.amount_owed === 'number' && typeof first.amount_owes === 'number') {
-      userBalance = first.amount_owed - first.amount_owes;
-    }
-  }
-} catch (error) {
-  // handle error
-}            id: member.id,
+          return {
+            id: member.id,
             user_id: member.user_id,
             role: member.role,
             joined_at: member.joined_at,
