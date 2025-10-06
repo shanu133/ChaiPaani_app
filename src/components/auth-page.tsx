@@ -4,11 +4,11 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Separator } from "./ui/separator";
-import { ImageWithFallback } from "./figma/ImageWithFallback";
 import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
 import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
 import { ArrowLeft, Mail, Lock, Eye, EyeOff, Phone, Loader2 } from "lucide-react";
 import { authService } from "../lib/supabase-service";
+import { toast } from "sonner";
 
 interface AuthPageProps {
   onLogin: () => void;
@@ -51,11 +51,12 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
     } catch (error: any) {
       console.error("Auth error:", error);
       // Show user-facing error (e.g., toast notification)
-      showErrorToast(error.message || "Authentication failed");
+      toast.error(error.message || "Authentication failed");
     } finally {
       setIsLoading(false);
     }
   };
+  
   const handleSocialLogin = async (provider: string) => {
     if (provider === "google") {
       setIsLoading(true);
@@ -65,7 +66,7 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
         // OAuth redirect will handle the rest
       } catch (error: any) {
         console.error("Social login error:", error);
-        showErrorToast(error.message || "Social login failed");
+        toast.error(error.message || "Social login failed");
       } finally {
         // Reset after a delay in case redirect doesn't happen
         setTimeout(() => setIsLoading(false), 5000);

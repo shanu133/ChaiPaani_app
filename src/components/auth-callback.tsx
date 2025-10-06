@@ -84,19 +84,20 @@ export function AuthCallback({ onAuthSuccess, onAuthError }: AuthCallbackProps) 
         setError("An unexpected error occurred");
         setTimeout(() => onAuthError(), 3000);
       }
-  if (error) {
+    };
+
+    handleAuthCallback();
+  }, [onAuthSuccess, onAuthError]);
+
+  if (inviteError) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="text-center space-y-4">
+        <div className="text-center space-y-6 max-w-md">
           <div className="text-red-600">
-            <h2 className="text-xl font-semibold mb-2">Authentication Error</h2>
-            <p>{error}</p>
+            <h2 className="text-xl font-semibold mb-2">Unable to Join Group</h2>
+            <p className="text-sm">{inviteError}</p>
           </div>
-          <p className="text-muted-foreground">Redirecting...</p>
-        </div>
-      </div>
-    );
-  }          <div className="flex items-center justify-center gap-3">
+          <div className="flex items-center justify-center gap-3">
             <button
               className="inline-flex items-center px-4 py-2 rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
               onClick={async () => {
@@ -151,7 +152,7 @@ export function AuthCallback({ onAuthSuccess, onAuthError }: AuthCallbackProps) 
             <h2 className="text-xl font-semibold mb-2">Authentication Error</h2>
             <p>{error}</p>
           </div>
-          <p className="text-muted-foreground">Redirecting to login page...</p>
+          <p className="text-muted-foreground">Redirecting...</p>
         </div>
       </div>
     );
