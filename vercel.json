@@ -18,7 +18,10 @@
     }
   ],
   "rewrites": [
+    { "source": "/assets/(.*)", "destination": "/assets/$1" },
+    { "source": "/favicon.ico", "destination": "/favicon.ico" },
+    { "source": "/index.html", "destination": "/index.html" },
     { "source": "/", "destination": "/index.html" },
-    { "source": "/[^.]*", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
