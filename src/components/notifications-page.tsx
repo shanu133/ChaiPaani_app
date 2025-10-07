@@ -117,8 +117,18 @@ export function NotificationsPage({ onBack, onLogoClick }: NotificationsPageProp
           is_read: notification.is_read,
           created_at: notification.created_at,
           metadata: notification.metadata,
-          data: notification.metadata ? JSON.parse(notification.metadata) : undefined
-        }));
+          data: notification.metadata 
+            ? (() => {
+                try {
+                  return typeof notification.metadata === 'string'
+                    ? JSON.parse(notification.metadata)
+                    : notification.metadata;
+                } catch {
+                  console.error("Invalid metadata JSON:", notification.metadata);
+                  return undefined;
+                }
+              })()
+            : undefined        }));
 
         setNotifications(transformedNotifications);
       }

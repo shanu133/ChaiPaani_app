@@ -26,9 +26,9 @@ create table if not exists public.invitations (
   created_at timestamptz not null default now(),
   accepted_at timestamptz,
   expires_at timestamptz default (now() + interval '14 days'),
-  unique (token)
+  unique (token),
+  unique (group_id, invitee_email) where (status = 'pending')
 );
-
 create index if not exists invitations_group_id_idx on public.invitations(group_id);
 create index if not exists invitations_invitee_email_idx on public.invitations(invitee_email);
 create index if not exists invitations_inviter_id_idx on public.invitations(inviter_id);
@@ -62,9 +62,8 @@ create policy invitations_select on public.invitations
 for select
 using (
   inviter_id = auth.uid()
-  or invitee_email = coalesce((auth.jwt() ->> 'email'), '')
+  or lower(invitee_email) = lower(coalesce((auth.jwt() ->> 'email'), ''))
 );
-
 -- Insert: allow inviter if they created the group (admin/creator can be tightened later)
 drop policy if exists invitations_insert on public.invitations;
 create policy invitations_insert on public.invitations
@@ -83,9 +82,8 @@ create policy invitations_update on public.invitations
 for update
 using (
   inviter_id = auth.uid()
-  or invitee_email = coalesce((auth.jwt() ->> 'email'), '')
+  or lower(invitee_email) = lower(coalesce((auth.jwt() ->> 'email'), ''))
 );
-
 -- Delete: inviter can delete invites they sent
 drop policy if exists invitations_delete on public.invitations;
 create policy invitations_delete on public.invitations
@@ -141,15 +139,21 @@ begin
 
   -- Ensure caller is the group creator (admin path can be added later)
   select created_by into v_group_creator from public.groups where id = p_group_id;
-  if v_group_creator is null then
-    raise exception 'group not found';
-  end if;
-  if v_group_creator <> v_user_id then
-    raise exception 'only group creator can invite at this time';
-  end if;
-
-  -- Create invitation (RLS insert policy checks created_by condition)
+  -- Create invitation atomically with creator check
+  with group_check as (
+    select id
+    from public.groups
+    where id = p_group_id
+      and created_by = v_user_id
+  )
   insert into public.invitations (group_id, inviter_id, invitee_email)
+  select p_group_id, v_user_id, p_invitee_email
+    from group_check
+  returning token into v_token;
+
+  if v_token is null then
+    raise exception 'group not found or only group creator can invite';
+  end if;  insert into public.invitations (group_id, inviter_id, invitee_email)
   values (p_group_id, v_user_id, p_invitee_email)
   returning token into v_token;
 
@@ -186,16 +190,16 @@ begin
   end if;
 
   v_email := coalesce((auth.jwt() ->> 'email'), '');
-  if v_email = '' then
-    raise exception 'email not available on JWT';
-  end if;
-
   select * into v_inv
   from public.invitations
   where token = p_token
     and status = 'pending'
-    and (expires_at is null or expires_at > now());
+    and (expires_at is null or expires_at > now())
+  for update;
 
+  if not found then
+    raise exception 'invitation not found or expired';
+  end if;
   if not found then
     raise exception 'invitation not found or expired';
   end if;

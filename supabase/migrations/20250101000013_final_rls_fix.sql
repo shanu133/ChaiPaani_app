@@ -14,6 +14,36 @@ DROP POLICY IF EXISTS "group_members_update_self_policy" ON public.group_members
 DROP POLICY IF EXISTS "group_members_update_creator_policy" ON public.group_members;
 DROP POLICY IF EXISTS "group_members_delete_self_policy" ON public.group_members;
 DROP POLICY IF EXISTS "group_members_delete_creator_policy" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_creator_manage" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_insert_creator" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_update_creator" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_delete_creator" ON public.group_members;
+-- Drop policies created by this migration (idempotent)
+DROP POLICY IF EXISTS "group_members_insert_self" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_update_own" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_delete_own" ON public.group_members;
+DROP POLICY IF EXISTS "expenses_select_policy" ON public.expenses;
+DROP POLICY IF EXISTS "expenses_insert_policy" ON public.expenses;
+DROP POLICY IF EXISTS "expenses_update_policy" ON public.expenses;
+DROP POLICY IF EXISTS "expenses_delete_policy" ON public.expenses;
+DROP POLICY IF EXISTS "expense_splits_select_policy" ON public.expense_splits;
+DROP POLICY IF EXISTS "expense_splits_insert_policy" ON public.expense_splits;
+DROP POLICY IF EXISTS "expense_splits_update_policy" ON public.expense_splits;
+DROP POLICY IF EXISTS "expense_splits_delete_policy" ON public.expense_splits;
+DROP POLICY IF EXISTS "settlements_select_policy" ON public.settlements;
+DROP POLICY IF EXISTS "settlements_insert_policy" ON public.settlements;
+DROP POLICY IF EXISTS "settlements_update_policy" ON public.settlements;
+DROP POLICY IF EXISTS "invitations_select_policy" ON public.invitations;
+DROP POLICY IF EXISTS "invitations_insert_policy" ON public.invitations;
+DROP POLICY IF EXISTS "invitations_update_policy" ON public.invitations;
+DROP POLICY IF EXISTS "invitations_delete_policy" ON public.invitations;
+DROP POLICY IF EXISTS "notifications_select_policy" ON public.notifications;
+DROP POLICY IF EXISTS "notifications_insert_policy" ON public.notifications;
+DROP POLICY IF EXISTS "notifications_update_policy" ON public.notifications;
+DROP POLICY IF EXISTS "notifications_delete_policy" ON public.notifications;
+DROP POLICY IF EXISTS "profiles_select_policy" ON public.profiles;
+DROP POLICY IF EXISTS "profiles_update_policy" ON public.profiles;
+DROP POLICY IF EXISTS "profiles_insert_policy" ON public.profiles;
 
 -- GROUPS POLICIES
 -- Allow users to see groups they created or are members of
@@ -35,30 +65,32 @@ CREATE POLICY "groups_update_policy" ON public.groups
 
 CREATE POLICY "groups_delete_policy" ON public.groups
   FOR DELETE USING (created_by = auth.uid());
+-- (removed duplicate early expenses policies; see the consolidated EXPENSES POLICIES section below)
 
--- GROUP_MEMBERS POLICIES
-CREATE POLICY "group_members_select_policy" ON public.group_members
-  FOR SELECT USING (
-    user_id = auth.uid()
-    OR group_id IN (
+-- Group creators: operation-specific, scoped to their own groups only
+-- INSERT: creators can add members to groups they created
+CREATE POLICY "group_members_insert_creator" ON public.group_members
+  FOR INSERT WITH CHECK (
+    group_id IN (
       SELECT id FROM public.groups WHERE created_by = auth.uid()
     )
   );
 
-CREATE POLICY "group_members_insert_self" ON public.group_members
-  FOR INSERT WITH CHECK (user_id = auth.uid());
+-- UPDATE: creators can update memberships only within groups they created
+CREATE POLICY "group_members_update_creator" ON public.group_members
+  FOR UPDATE USING (
+    group_id IN (
+      SELECT id FROM public.groups WHERE created_by = auth.uid()
+    )
+  ) WITH CHECK (
+    group_id IN (
+      SELECT id FROM public.groups WHERE created_by = auth.uid()
+    )
+  );
 
-CREATE POLICY "group_members_update_own" ON public.group_members
-  FOR UPDATE USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
-
-CREATE POLICY "group_members_delete_own" ON public.group_members
-  FOR DELETE USING (user_id = auth.uid());
-
--- Allow group creators to manage memberships (but avoid recursion by not checking membership)
--- This is a compromise - creators can manage all memberships in their groups
--- The application layer will handle proper validation
-CREATE POLICY "group_members_creator_manage" ON public.group_members
-  FOR ALL USING (
+-- DELETE: creators can remove memberships only from groups they created
+CREATE POLICY "group_members_delete_creator" ON public.group_members
+  FOR DELETE USING (
     group_id IN (
       SELECT id FROM public.groups WHERE created_by = auth.uid()
     )
@@ -127,8 +159,8 @@ CREATE POLICY "expense_splits_delete_policy" ON public.expense_splits
 -- SETTLEMENTS POLICIES
 CREATE POLICY "settlements_select_policy" ON public.settlements
   FOR SELECT USING (
-    from_user_id = auth.uid()
-    OR to_user_id = auth.uid()
+    payer_id = auth.uid()
+    OR receiver_id = auth.uid()
     OR group_id IN (
       SELECT id FROM public.groups WHERE created_by = auth.uid()
     )
@@ -136,7 +168,7 @@ CREATE POLICY "settlements_select_policy" ON public.settlements
 
 CREATE POLICY "settlements_insert_policy" ON public.settlements
   FOR INSERT WITH CHECK (
-    from_user_id = auth.uid()
+    payer_id = auth.uid()
     OR group_id IN (
       SELECT id FROM public.groups WHERE created_by = auth.uid()
     )
@@ -144,11 +176,11 @@ CREATE POLICY "settlements_insert_policy" ON public.settlements
 
 CREATE POLICY "settlements_update_policy" ON public.settlements
   FOR UPDATE USING (
-    from_user_id = auth.uid()
-    OR to_user_id = auth.uid()
+    payer_id = auth.uid()
+    OR receiver_id = auth.uid()
   ) WITH CHECK (
-    from_user_id = auth.uid()
-    OR to_user_id = auth.uid()
+    payer_id = auth.uid()
+    OR receiver_id = auth.uid()
   );
 
 -- INVITATIONS POLICIES

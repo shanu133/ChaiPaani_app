@@ -13,7 +13,7 @@ interface ResponseBody {
 
 // CORS headers object for reuse
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('ALLOWED_ORIGIN') ?? '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info',
   'Access-Control-Max-Age': '86400',
@@ -128,7 +128,7 @@ Deno.serve(async (req) => {
           group_invitation_token: token,
           invited_to_group: groupId
         },
-        redirectTo: `${Deno.env.get('SUPABASE_URL')}/auth/callback?token=${token}`
+        redirectTo: `${Deno.env.get('FRONTEND_URL')}/auth/callback#token=${token}`
       })
 
       if (emailError) {

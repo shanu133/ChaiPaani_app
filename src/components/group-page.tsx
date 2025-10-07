@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Badge } from "./ui/badge";
@@ -19,21 +18,18 @@ import {
   Settings,
   LogOut,
   IndianRupee,
-  TrendingUp,
-  TrendingDown,
   Menu,
   X,
   ArrowLeft,
   MoreVertical,
   Edit,
   Trash2,
-  Mail,
   Clock,
   CheckCircle,
   AlertCircle,
   Loader2
 } from "lucide-react";
-import { groupService, expenseService, authService, invitationService } from "../lib/supabase-service";
+import { groupService, expenseService, authService } from "../lib/supabase-service";
 import { supabase } from "../lib/supabase";
 
 interface GroupPageProps {
@@ -52,17 +48,15 @@ interface GroupMember {
   profile?: {
     id: string;
     full_name: string;
-    display_name: string;
+    display_name: string | null;
     email: string;
-    avatar_url?: string;
+    avatar_url?: string | null;
   };
   invitation?: {
-    id: string;
-    token: string;
+    invitee_email: string;
     status: string;
     created_at: string;
-    invitee_email: string;
-  };
+  } | null;
 }
 
 interface GroupDetails {
@@ -74,7 +68,18 @@ interface GroupDetails {
   created_at: string;
   created_by: string;
   members: GroupMember[];
-  expenses: any[];
+}
+
+interface Expense {
+  id: string;
+  description: string;
+  amount: number;
+  payer?: { full_name?: string } | null;
+  created_at: string;
+}
+
+interface GroupView extends GroupDetails {
+  expenses: Expense[];
   totalExpenses: number;
   userBalance: number;
 }
@@ -82,77 +87,55 @@ interface GroupDetails {
 export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showAddExpense, setShowAddExpense] = useState(false);
-  const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showSettleUp, setShowSettleUp] = useState(false);
   const [showAddMembers, setShowAddMembers] = useState(false);
   const [showEditGroup, setShowEditGroup] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
-  const [group, setGroup] = useState<GroupDetails | null>(null);
+  const [group, setGroup] = useState<GroupView | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<any>(null);
-  const [isOwner, setIsOwner] = useState(false);
 
-  // Fetch group details on component mount
-  useEffect(() => {
-    fetchGroupDetails();
-    fetchCurrentUser();
-  }, [groupId]);
+  interface CurrentUser { id: string; name: string; avatar: string; }
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
+  const [modalMembers, setModalMembers] = useState<{ id: string; name: string; avatar: string }[]>([]);
+
+  const isValidMemberStatus = (status: any): status is 'active' | 'pending' | 'inactive' =>
+    status === 'active' || status === 'pending' || status === 'inactive';
 
   const fetchGroupDetails = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-
-      // Get group details with members and expenses
       const { data: groupData, error: groupError } = await groupService.getGroupDetails(groupId);
-
-      if (groupError) {
+      if (groupError || !groupData) {
         console.error("Error fetching group details:", groupError);
-        console.error("Failed to load group details");
-        setGroup(null); // This will trigger the "Group Not Found" UI
+        setGroup(null);
         setLoading(false);
         return;
       }
 
-      if (!groupData) {
-        console.error("Group not found");
-        setGroup(null); // This will trigger the "Group Not Found" UI
-        setLoading(false);
-        return;
-      }
+      const userId = currentUser?.id || (await authService.getCurrentUser())?.id;
+      setIsOwner(!!userId && groupData.created_by === userId);
 
-      // Get current user to determine ownership
-      const user = await authService.getCurrentUser();
-      const isGroupOwner = groupData.created_by === user?.id;
-      setIsOwner(isGroupOwner);
-
-      // Transform members data to include invitation status
       const transformedMembers: GroupMember[] = await Promise.all(
         (groupData.group_members || []).map(async (member: any) => {
-          let status: 'active' | 'pending' | 'inactive' = 'active';
-          let invitation = null;
+          let status: 'active' | 'pending' | 'inactive' = isValidMemberStatus(member.status) ? member.status : 'active';
+          let invitation = member.invitation || null;
 
-          // Check if member has a profile (active user)
-          if (!member.profiles) {
-            // Check for pending invitations
+          if (status === 'active' && !member.profiles && member.email) {
             try {
               const { data: invites } = await supabase
                 .from('invitations')
                 .select('*')
                 .eq('group_id', groupId)
-                .eq('invitee_email', member.email || '')
+                .eq('invitee_email', member.email)
                 .eq('status', 'pending')
                 .single();
-
               if (invites) {
                 status = 'pending';
                 invitation = invites;
-              } else {
-                status = 'inactive';
               }
-            } catch (error) {
-              status = 'inactive';
-            }
+            } catch {}
           }
 
           return {
@@ -169,22 +152,25 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
               avatar_url: member.profiles.avatar_url
             } : undefined,
             invitation
-          };
+          } as GroupMember;
         })
       );
 
-      // Calculate total expenses
-      const totalExpenses = (groupData.expenses || []).reduce((sum: number, expense: any) => sum + expense.amount, 0);
+      const expenses: Expense[] = (groupData.expenses || []) as Expense[];
+      const totalExpenses = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
-      // Calculate user's balance
       let userBalance = 0;
       try {
         const { data: balanceData } = await expenseService.getUserBalance(groupId);
-        if (balanceData && balanceData.length > 0) {
-          userBalance = balanceData[0].net_balance || 0;
+        if (Array.isArray(balanceData) && balanceData.length > 0) {
+          const first: any = balanceData[0];
+          if (typeof first.net_balance === 'number') userBalance = first.net_balance;
+          else if (typeof first.amount_owed === 'number' && typeof first.amount_owes === 'number') {
+            userBalance = (first.amount_owed as number) - (first.amount_owes as number);
+          }
         }
-      } catch (error) {
-        console.error(`Error fetching balance for group ${groupId}:`, error);
+      } catch (e) {
+        console.error(`Error fetching balance for group ${groupId}:`, e);
       }
 
       setGroup({
@@ -196,36 +182,60 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
         created_at: groupData.created_at,
         created_by: groupData.created_by,
         members: transformedMembers,
-        expenses: groupData.expenses || [],
+        expenses,
         totalExpenses,
         userBalance
       });
-
     } catch (error) {
       console.error("Error fetching group details:", error);
-      console.error("Failed to load group details");
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    fetchGroupDetails();
+    fetchCurrentUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId]);
+
   const fetchCurrentUser = async () => {
     try {
       const user = await authService.getCurrentUser();
       if (user) {
-        setCurrentUser({
-          id: user.id,
-          name: user.user_metadata?.full_name || user.email || "You",
-          avatar: (user.user_metadata?.full_name || user.email || "You").substring(0, 2).toUpperCase()
-        });
+        const name = user.user_metadata?.full_name || user.email || "You";
+        setCurrentUser({ id: user.id, name, avatar: name.substring(0, 2).toUpperCase() });
       }
     } catch (error) {
       console.error("Error fetching current user:", error);
     }
   };
 
-  const handleAddExpense = () => {
-    setShowAddExpense(true);
+  // Transform GroupMember records to the minimal shape required by modals
+  const transformMembersForModal = (members: Array<any>) => {
+    return (members || [])
+      .filter((m: any) => m.status === 'active')
+      .map((m: any) => ({
+        id: m.user_id,
+        name: m.profile?.full_name || m.display_name || 'Unknown',
+        avatar: (m.profile?.full_name || m.display_name || 'UN').substring(0, 2).toUpperCase() || 'UN'
+      }));
+  };
+
+  const handleAddExpense = async () => {
+    try {
+      // Fetch fresh members via RPC to ensure latest active members are included
+      const { data } = await groupService.getGroupMembersWithStatus(groupId);
+      const mapped = transformMembersForModal(data || []);
+      setModalMembers(mapped);
+    } catch (e) {
+      // Fallback to existing group members if RPC fails
+      if (group) {
+        setModalMembers(transformMembersForModal(group.members));
+      }
+    } finally {
+      setShowAddExpense(true);
+    }
   };
 
   const handleSettleUp = () => {
@@ -266,17 +276,32 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
     }
   };
 
-  const handleRemoveMember = async (memberId: string) => {
+  const handleRemoveMember = async (member: GroupMember) => {
     if (!group) return;
 
     try {
-      // Remove member from group_members table
-      const { error } = await supabase
-        .from('group_members')
-        .delete()
-        .eq('id', memberId);
+      let opError: { message?: string } | null = null;
 
-      if (error) throw error;
+      if (member.status === 'pending' && member.invitation?.invitee_email) {
+        // Cancel a pending invitation instead of trying to remove a non-existent membership
+        const { error } = await supabase
+          .from('invitations')
+          .delete()
+          .eq('group_id', group.id)
+          .eq('invitee_email', member.invitation.invitee_email)
+          .eq('status', 'pending');
+        opError = error;
+      } else {
+        // Remove an active member by group_id + user_id (not by synthetic id)
+        const { error } = await supabase
+          .from('group_members')
+          .delete()
+          .eq('group_id', group.id)
+          .eq('user_id', member.user_id);
+        opError = error;
+      }
+
+      if (opError) throw opError;
 
       console.log("Member removed successfully");
       // Refresh group data
@@ -560,8 +585,8 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
                   <div className="text-sm text-muted-foreground">Your Balance</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{group.members.length}</div>
-                  <div className="text-sm text-muted-foreground">Members</div>
+                  <div className="text-2xl font-bold">{group.members.filter(m => m.status === 'active').length}</div>
+                  <div className="text-sm text-muted-foreground">Active Members</div>
                 </div>
               </div>
             </CardContent>
@@ -571,7 +596,7 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
-                <span>Members ({group.members.length})</span>
+                <span>Members ({group.members.filter(m => m.status === 'active').length})</span>
                 <Button variant="outline" size="sm" onClick={handleAddMembers}>
                   <Plus className="w-4 h-4 mr-2" />
                   Add Member
@@ -617,7 +642,7 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleRemoveMember(member.id)}
+                        onClick={() => handleRemoveMember(member)}
                         className="text-destructive hover:text-destructive"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -667,11 +692,7 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
       <AddExpenseModal
         isOpen={showAddExpense}
         onClose={() => setShowAddExpense(false)}
-        groupMembers={group.members.filter(m => m.status === 'active').map(m => ({
-          id: m.user_id,
-          name: m.profile?.full_name || 'Unknown',
-          avatar: m.profile?.full_name?.substring(0, 2).toUpperCase() || 'UN'
-        }))}
+        groupMembers={(modalMembers && modalMembers.length > 0) ? modalMembers : transformMembersForModal(group.members)}
         currentUser={currentUser}
         groupId={group.id}
         onExpenseCreated={handleExpenseCreated}
@@ -683,13 +704,10 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
         group={{
           id: group.id,
           name: group.name,
-          members: group.members.filter(m => m.status === 'active').map(m => ({
-            id: m.user_id,
-            name: m.profile?.full_name || 'Unknown',
-            avatar: m.profile?.full_name?.substring(0, 2).toUpperCase() || 'UN'
-          }))
+          members: transformMembersForModal(group.members)
         }}
         onSettleUp={() => {
+          // Sync group view after a successful settlement
           fetchGroupDetails();
           console.log("Settlement recorded successfully!");
         }}
@@ -708,7 +726,7 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
       <CreateGroupModal
         isOpen={showEditGroup}
         onClose={() => setShowEditGroup(false)}
-        onCreateGroup={(groupData) => {
+        onCreateGroup={() => {
           // This should be an edit operation
           console.log("Edit group functionality coming soon");
           setShowEditGroup(false);

@@ -48,44 +48,93 @@ export function Dashboard({
   onGoToSettings,
   onLogoClick,
 }: DashboardProps) {
+  // Domain types used in this component
+  interface AuthUser {
+    id: string;
+    email?: string;
+    user_metadata?: {
+      full_name?: string;
+    };
+  }
+
+  interface GroupMemberBasic {
+    user_id: string;
+    status: 'active' | 'pending' | string;
+    profile?: {
+      full_name?: string;
+    };
+  }
+
+  interface Group {
+    id: string;
+    name: string;
+    group_members?: GroupMemberBasic[];
+  }
+
+  interface ExpenseSplit {
+    user_id: string;
+    amount: number;
+  }
+
+  interface Expense {
+    id: string;
+    description: string;
+    amount: number;
+    created_at: string;
+    payer?: { id?: string; full_name?: string };
+    group?: { name?: string };
+    expense_splits?: ExpenseSplit[];
+  }
+
+  interface BalanceItem {
+    amount: number;
+    user_id?: string;
+    group_id?: string;
+  }
+
+  // RPC result shape for getGroupMembersWithStatus
+  interface RpcGroupMember {
+    user_id: string;
+    status: 'active' | 'pending' | string;
+    display_name?: string;
+  }
+  const GROUP_MEMBER_STATUS_ACTIVE = 'active' as const;
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isAddExpenseModalOpen, setIsAddExpenseModalOpen] = useState(false);
   const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
   const [isSettleUpModalOpen, setIsSettleUpModalOpen] = useState(false);
   const [isScanReceiptModalOpen, setIsScanReceiptModalOpen] = useState(false);
+  const [modalGroupMembers, setModalGroupMembers] = useState<{ id: string; name: string; avatar: string }[]>([]);
+  const [modalGroupId, setModalGroupId] = useState<string | null>(null);
 
   // Real data state
-  interface BalanceItem {
-    amount: number;
-    [key: string]: any; // Add more fields as needed
-  }
-
-  const [groups, setGroups] = useState<any[]>([]);
-  const [recentExpenses, setRecentExpenses] = useState<any[]>([]);
-  const [userBalance, setUserBalance] = useState({ owed: 0, owes: 0, net: 0 });
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [recentExpenses, setRecentExpenses] = useState<Expense[]>([]);
+  const [userBalance, setUserBalance] = useState<{ owed: number; owes: number; net: number }>({ owed: 0, owes: 0, net: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
 
   // Data fetching functions
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
       setError(null);
-
       // Get current user
       const user = await authService.getCurrentUser();
-      setCurrentUser(user);
-
+      if (!user) {
+        throw new Error("Failed to get current user");
+      }
+      setCurrentUser(user as AuthUser);
       // Fetch user groups
       const { data: groupsData, error: groupsError } = await groupService.getUserGroups();
       if (groupsError) throw groupsError;
-      setGroups(groupsData || []);
+      setGroups((groupsData as unknown as Group[]) || []);
 
       // Fetch recent expenses
       const { data: expensesData, error: expensesError } = await expenseService.getRecentExpenses(10);
       if (expensesError) throw expensesError;
-      setRecentExpenses(expensesData || []);
+      setRecentExpenses((expensesData as unknown as Expense[]) || []);
 
       // Fetch user balance
       const { data: balanceData, error: balanceError } = await expenseService.getUserBalance();
@@ -94,28 +143,26 @@ export function Dashboard({
       // Normalize balanceData to array if needed
       let balances: BalanceItem[] = [];
       if (Array.isArray(balanceData)) {
-        balances = balanceData as BalanceItem[];
+        balances = balanceData as unknown as BalanceItem[];
       } else if (balanceData && typeof balanceData === "object") {
-        balances = [balanceData as BalanceItem];
+        balances = [balanceData as unknown as BalanceItem];
       }
 
       // Calculate balance summary
-// Calculate balance summary
-if (balances.length > 0) {
-  const owed = balances
-    .filter((item) => typeof item.amount === "number" && item.amount > 0)
-    .reduce((sum, item) => sum + item.amount, 0);
-  const owes = Math.abs(
-    balances
-      .filter((item) => typeof item.amount === "number" && item.amount < 0)
-      .reduce((sum, item) => sum + item.amount, 0)
-  );
-  setUserBalance({ owed, owes, net: owed - owes });
-} else {
-  // Avoid stale totals if API returns empty/null
-  setUserBalance({ owed: 0, owes: 0, net: 0 });
-}
-      
+      if (balances.length > 0) {
+        const owed = balances
+          .filter((item) => typeof item.amount === "number" && item.amount > 0)
+          .reduce((sum, item) => sum + item.amount, 0);
+        const owes = Math.abs(
+          balances
+            .filter((item) => typeof item.amount === "number" && item.amount < 0)
+            .reduce((sum, item) => sum + item.amount, 0)
+        );
+        setUserBalance({ owed, owes, net: owed - owes });
+      } else {
+        // Avoid stale totals if API returns empty/null
+        setUserBalance({ owed: 0, owes: 0, net: 0 });
+      }
 
     } catch (err: any) {
       console.error("Error fetching dashboard data:", err);
@@ -128,6 +175,44 @@ if (balances.length > 0) {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  // Helper to open Add Expense for a specific group, fetching members via RPC
+  const openAddExpenseForGroup = async (gid: string) => {
+    setModalGroupId(gid);
+    setModalGroupMembers([]);
+    try {
+      setError(null);
+      const { data, error } = await groupService.getGroupMembersWithStatus(gid);
+      if (error) {
+        setError(typeof error === 'string' ? error : (error as any)?.message || 'Failed to fetch group members');
+        return;
+      }
+      if (!Array.isArray(data)) {
+        setError('Unexpected response while fetching group members');
+        return;
+      }
+      const validMembers = (data as RpcGroupMember[])
+        .filter((m) => m.status === GROUP_MEMBER_STATUS_ACTIVE)
+        .filter((m) => typeof m.user_id === 'string' && m.user_id.trim().length > 0 && typeof m.display_name === 'string' && (m.display_name?.trim().length ?? 0) > 0)
+        .map((m) => {
+          const name = (m.display_name as string).trim();
+          const avatarBase = name || 'UN';
+          const avatar = avatarBase.substring(0, 2).toUpperCase();
+          return { id: m.user_id, name, avatar };
+        });
+
+      if (validMembers.length === 0) {
+        setError('No active members found for this group.');
+        return;
+      }
+
+      setModalGroupMembers(validMembers);
+      setIsAddExpenseModalOpen(true);
+    } catch (e: any) {
+      setError(e?.message || 'Could not fetch members for Add Expense modal');
+      return;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -214,7 +299,13 @@ if (balances.length > 0) {
           <div className="p-4 border-t">
             <Button
               className="w-full gap-2"
-              onClick={() => setIsAddExpenseModalOpen(true)}
+              onClick={() => {
+                if (groups.length > 0) {
+                  openAddExpenseForGroup(groups[0].id);
+                } else {
+                  console.error('No groups available. Create a group first.');
+                }
+              }}
             >
               <Plus className="w-4 h-4" />
               Add Expense
@@ -394,7 +485,7 @@ if (balances.length > 0) {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 md:space-y-4">
-                {recentExpenses.length > 0 ? recentExpenses.map((expense: any) => {
+                {recentExpenses.length > 0 ? recentExpenses.map((expense) => {
                   const isCurrentUserPayer = expense.payer?.id === currentUser?.id;
                   const userSplit = expense.expense_splits?.find((split: any) => split.user_id === currentUser?.id);
                   const yourShare = userSplit?.amount || 0;
@@ -462,7 +553,7 @@ if (balances.length > 0) {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {groups.length > 0 ? groups.map((group: any) => (
+                {groups.length > 0 ? groups.map((group) => (
                   <div
                     key={group.id}
                     className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors cursor-pointer"
@@ -481,10 +572,19 @@ if (balances.length > 0) {
                         </p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <Badge variant="secondary">
-                        Active
-                      </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary">Active</Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openAddExpenseForGroup(group.id);
+                        }}
+                      >
+                        <Plus className="w-4 h-4 mr-1" />
+                        Add Expense
+                      </Button>
                     </div>
                   </div>
                 )) : (
@@ -510,7 +610,13 @@ if (balances.length > 0) {
                 <Button
                   variant="outline"
                   className="h-16 md:h-20 flex-col gap-1 md:gap-2 text-xs md:text-sm"
-                  onClick={() => setIsAddExpenseModalOpen(true)}
+                  onClick={() => {
+                    if (groups.length > 0) {
+                      openAddExpenseForGroup(groups[0].id);
+                    } else {
+                      console.error('No groups available. Create a group first.');
+                    }
+                  }}
                 >
                   <Plus className="w-5 h-5 md:w-6 md:h-6" />
                   Add Expense
@@ -551,17 +657,13 @@ if (balances.length > 0) {
       <AddExpenseModal
         isOpen={isAddExpenseModalOpen}
         onClose={() => setIsAddExpenseModalOpen(false)}
-        groupMembers={groups.length > 0 ? groups.slice(0, 4).map((group) => ({
-          id: group.id,
-          name: group.name,
-          avatar: group.name.substring(0, 2).toUpperCase()
-        })) : []}
+        groupMembers={modalGroupMembers}
         currentUser={currentUser ? {
           id: currentUser.id,
           name: currentUser.user_metadata?.full_name || "You",
           avatar: (currentUser.user_metadata?.full_name || "You").substring(0, 2).toUpperCase()
         } : { id: "temp", name: "You", avatar: "YO" }}
-        groupId={groups.length > 0 ? groups[0].id : "demo-group"}
+        groupId={modalGroupId || (groups.length > 0 ? groups[0].id : "")}
         onExpenseCreated={() => {
           console.log("Expense created successfully");
           fetchDashboardData(); // Refresh dashboard data
@@ -582,6 +684,8 @@ if (balances.length > 0) {
         onClose={() => setIsSettleUpModalOpen(false)}
         onSettleUp={(settlementData) => {
           console.log("Settlement recorded:", settlementData);
+          // Refresh dashboard data so balances and recent activity reflect the settlement
+          fetchDashboardData();
           setIsSettleUpModalOpen(false);
         }}
       />

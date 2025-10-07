@@ -15,10 +15,12 @@ DROP POLICY IF EXISTS "group_members_creator_manage" ON public.group_members;
 
 -- GROUPS POLICIES - Simple and direct approach
 -- Allow users to see groups they created (no membership check needed)
+DROP POLICY IF EXISTS "groups_creators_can_select" ON public.groups;
 CREATE POLICY "groups_creators_can_select" ON public.groups
   FOR SELECT USING (created_by = auth.uid());
 
 -- Allow users to see groups they are direct members of (using a subquery that won't cause recursion)
+DROP POLICY IF EXISTS "groups_members_can_select" ON public.groups;
 CREATE POLICY "groups_members_can_select" ON public.groups
   FOR SELECT USING (
     id IN (
@@ -31,21 +33,26 @@ CREATE POLICY "groups_members_can_select" ON public.groups
   CREATE INDEX IF NOT EXISTS idx_group_members_group_id_user_id
     ON public.group_members (group_id, user_id);
 
+DROP POLICY IF EXISTS "groups_insert_policy" ON public.groups;
 CREATE POLICY "groups_insert_policy" ON public.groups
   FOR INSERT WITH CHECK (created_by = auth.uid());
 
+DROP POLICY IF EXISTS "groups_update_policy" ON public.groups;
 CREATE POLICY "groups_update_policy" ON public.groups
   FOR UPDATE USING (created_by = auth.uid()) WITH CHECK (created_by = auth.uid());
 
+DROP POLICY IF EXISTS "groups_delete_policy" ON public.groups;
 CREATE POLICY "groups_delete_policy" ON public.groups
   FOR DELETE USING (created_by = auth.uid());
 
 -- GROUP_MEMBERS POLICIES - Direct checks without referencing groups table
 -- Allow users to see their own memberships
+DROP POLICY IF EXISTS "group_members_select_own" ON public.group_members;
 CREATE POLICY "group_members_select_own" ON public.group_members
   FOR SELECT USING (user_id = auth.uid());
 
 -- Allow group creators to see all memberships in their groups (direct creator check)
+DROP POLICY IF EXISTS "group_members_select_as_creator" ON public.group_members;
 CREATE POLICY "group_members_select_as_creator" ON public.group_members
   FOR SELECT USING (
     EXISTS (
@@ -56,10 +63,12 @@ CREATE POLICY "group_members_select_as_creator" ON public.group_members
   );
 
 -- Allow users to join groups (insert their own membership)
+DROP POLICY IF EXISTS "group_members_insert_self" ON public.group_members;
 CREATE POLICY "group_members_insert_self" ON public.group_members
   FOR INSERT WITH CHECK (user_id = auth.uid());
 
 -- Allow group creators to add members (insert operation for creators)
+DROP POLICY IF EXISTS "group_members_insert_as_creator" ON public.group_members;
 CREATE POLICY "group_members_insert_as_creator" ON public.group_members
   FOR INSERT WITH CHECK (
     EXISTS (
@@ -70,6 +79,7 @@ CREATE POLICY "group_members_insert_as_creator" ON public.group_members
   );
 
 -- Allow invitation acceptance (users can join groups via accepted invitations)
+DROP POLICY IF EXISTS "group_members_insert_via_invitation" ON public.group_members;
 CREATE POLICY "group_members_insert_via_invitation" ON public.group_members
   FOR INSERT WITH CHECK (
     -- This allows the SECURITY DEFINER function to insert memberships during invitation acceptance
@@ -78,6 +88,7 @@ CREATE POLICY "group_members_insert_via_invitation" ON public.group_members
   );
 
 -- Allow group creators to add themselves as members during group creation
+DROP POLICY IF EXISTS "group_members_insert_self_on_creation" ON public.group_members;
 CREATE POLICY "group_members_insert_self_on_creation" ON public.group_members
   FOR INSERT WITH CHECK (
     user_id = auth.uid()
@@ -89,10 +100,12 @@ CREATE POLICY "group_members_insert_self_on_creation" ON public.group_members
   );
 
 -- Allow users to update their own membership
+DROP POLICY IF EXISTS "group_members_update_own" ON public.group_members;
 CREATE POLICY "group_members_update_own" ON public.group_members
   FOR UPDATE USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 
 -- Allow group creators to update memberships
+DROP POLICY IF EXISTS "group_members_update_as_creator" ON public.group_members;
 CREATE POLICY "group_members_update_as_creator" ON public.group_members
   FOR UPDATE USING (
     EXISTS (
@@ -109,10 +122,12 @@ CREATE POLICY "group_members_update_as_creator" ON public.group_members
   );
 
 -- Allow users to delete their own membership (leave group)
+DROP POLICY IF EXISTS "group_members_delete_own" ON public.group_members;
 CREATE POLICY "group_members_delete_own" ON public.group_members
   FOR DELETE USING (user_id = auth.uid());
 
 -- Allow group creators to remove members
+DROP POLICY IF EXISTS "group_members_delete_as_creator" ON public.group_members;
 CREATE POLICY "group_members_delete_as_creator" ON public.group_members
   FOR DELETE USING (
     EXISTS (
@@ -129,6 +144,9 @@ DROP POLICY IF EXISTS "expenses_select_policy" ON public.expenses;
 DROP POLICY IF EXISTS "expenses_insert_policy" ON public.expenses;
 DROP POLICY IF EXISTS "expenses_update_policy" ON public.expenses;
 DROP POLICY IF EXISTS "expenses_delete_policy" ON public.expenses;
+
+DROP POLICY IF EXISTS "expenses_select_own" ON public.expenses;
+DROP POLICY IF EXISTS "expenses_select_as_member" ON public.expenses;
 
 -- Allow users to see expenses they created
 CREATE POLICY "expenses_select_own" ON public.expenses
@@ -221,11 +239,12 @@ CREATE POLICY "expense_splits_delete_policy" ON public.expense_splits
 DROP POLICY IF EXISTS "settlements_select_policy" ON public.settlements;
 DROP POLICY IF EXISTS "settlements_insert_policy" ON public.settlements;
 DROP POLICY IF EXISTS "settlements_update_policy" ON public.settlements;
+DROP POLICY IF EXISTS "settlements_delete_policy" ON public.settlements;
 
 CREATE POLICY "settlements_select_policy" ON public.settlements
   FOR SELECT USING (
-    from_user_id = auth.uid()
-    OR to_user_id = auth.uid()
+    payer_id = auth.uid()
+    OR receiver_id = auth.uid()
     OR EXISTS (
       SELECT 1 FROM public.group_members
       WHERE group_members.group_id = settlements.group_id
@@ -235,7 +254,7 @@ CREATE POLICY "settlements_select_policy" ON public.settlements
 
 CREATE POLICY "settlements_insert_policy" ON public.settlements
   FOR INSERT WITH CHECK (
-    (from_user_id = auth.uid() OR to_user_id = auth.uid())
+    (payer_id = auth.uid() OR receiver_id = auth.uid())
     AND EXISTS (
       SELECT 1 FROM public.group_members
       WHERE group_members.group_id = settlements.group_id
@@ -245,9 +264,19 @@ CREATE POLICY "settlements_insert_policy" ON public.settlements
 
 CREATE POLICY "settlements_update_policy" ON public.settlements
   FOR UPDATE USING (
-    from_user_id = auth.uid() OR to_user_id = auth.uid()
+    payer_id = auth.uid() OR receiver_id = auth.uid()
   ) WITH CHECK (
-    from_user_id = auth.uid() OR to_user_id = auth.uid()
+    payer_id = auth.uid() OR receiver_id = auth.uid()
+  );
+
+-- Optional: allow creators to delete erroneous settlements they created
+CREATE POLICY "settlements_delete_policy" ON public.settlements
+  FOR DELETE USING (
+    EXISTS (
+      SELECT 1 FROM public.groups g
+      WHERE g.id = settlements.group_id AND g.created_by = auth.uid()
+    )
+    OR payer_id = auth.uid()
   );
 
 -- INVITATIONS POLICIES (these should be safe from recursion)

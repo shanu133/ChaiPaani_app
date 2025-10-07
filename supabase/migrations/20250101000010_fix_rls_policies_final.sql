@@ -34,7 +34,17 @@ CREATE POLICY "users_can_view_memberships" ON public.group_members
   );
 
 CREATE POLICY "users_can_join_groups" ON public.group_members
-  FOR INSERT WITH CHECK (user_id = auth.uid());
+  FOR INSERT WITH CHECK (
+    user_id = auth.uid()
+    AND EXISTS (
+      SELECT 1
+      FROM public.invitations i
+      WHERE i.group_id = group_members.group_id
+        AND i.status = 'pending'
+        AND (i.expires_at IS NULL OR i.expires_at > now())
+        AND lower(i.invitee_email) = lower(coalesce((auth.jwt() ->> 'email'), ''))
+    )
+  );
 
 -- Keep existing UPDATE, DELETE policies for group_members
 
@@ -62,16 +72,8 @@ CREATE POLICY "group_members_view_splits" ON public.expense_splits
       AND gm.user_id = auth.uid()
     )
   );
-
--- Keep existing policies for settlements, invitations, notifications
-
--- Apply the permanent RLS fix from the prepared file
--- This creates policies that work properly with JOIN operations
-
--- Step 1: Re-enable RLS on group_members
-ALTER TABLE group_members ENABLE ROW LEVEL SECURITY;
-
--- Step 2: Drop any remaining policies to start fresh
+DROP POLICY IF EXISTS "users_can_view_memberships" ON group_members;
+DROP POLICY IF EXISTS "users_can_join_groups" ON group_members;
 DROP POLICY IF EXISTS "Group creators can manage memberships" ON group_members;
 DROP POLICY IF EXISTS "group_creators_add_members" ON group_members;
 DROP POLICY IF EXISTS "group_creators_remove_members" ON group_members;
@@ -80,6 +82,15 @@ DROP POLICY IF EXISTS "group_creators_view_all_memberships" ON group_members;
 DROP POLICY IF EXISTS "users_join_groups" ON group_members;
 DROP POLICY IF EXISTS "users_leave_groups" ON group_members;
 DROP POLICY IF EXISTS "users_update_own_memberships" ON group_members;
+DROP POLICY IF EXISTS "users_view_own_memberships" ON group_members;
+DROP POLICY IF EXISTS "users_select_own_membership" ON group_members;
+DROP POLICY IF EXISTS "group_members_select_via_groups" ON group_members;
+DROP POLICY IF EXISTS "users_insert_own_membership" ON group_members;
+DROP POLICY IF EXISTS "group_creators_insert_members" ON group_members;
+DROP POLICY IF EXISTS "users_update_own_membership" ON group_members;
+DROP POLICY IF EXISTS "group_creators_update_members" ON group_members;
+DROP POLICY IF EXISTS "users_delete_own_membership" ON group_members;
+DROP POLICY IF EXISTS "group_creators_delete_members" ON group_members;DROP POLICY IF EXISTS "users_update_own_memberships" ON group_members;
 DROP POLICY IF EXISTS "users_view_own_memberships" ON group_members;
 DROP POLICY IF EXISTS "users_select_own_membership" ON group_members;
 DROP POLICY IF EXISTS "group_members_select_via_groups" ON group_members;
@@ -115,7 +126,17 @@ CREATE POLICY "group_members_select_via_groups" ON group_members
 
 -- INSERT Policies
 CREATE POLICY "users_insert_own_membership" ON group_members
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
+  FOR INSERT WITH CHECK (
+    auth.uid() = user_id
+    AND EXISTS (
+      SELECT 1
+      FROM public.invitations i
+      WHERE i.group_id = group_members.group_id
+        AND i.status = 'pending'
+        AND (i.expires_at IS NULL OR i.expires_at > now())
+        AND lower(i.invitee_email) = lower(coalesce((auth.jwt() ->> 'email'), ''))
+    )
+  );
 
 CREATE POLICY "group_creators_insert_members" ON group_members
   FOR INSERT WITH CHECK (

@@ -50,12 +50,12 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
       // Auth state change will be handled by the listener in App.tsx
     } catch (error: any) {
       console.error("Auth error:", error);
-      console.error(error.message || "Authentication failed");
+      // Show user-facing error (e.g., toast notification)
+      showErrorToast(error.message || "Authentication failed");
     } finally {
       setIsLoading(false);
     }
   };
-
   const handleSocialLogin = async (provider: string) => {
     if (provider === "google") {
       setIsLoading(true);
@@ -65,12 +65,13 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
         // OAuth redirect will handle the rest
       } catch (error: any) {
         console.error("Social login error:", error);
-        console.error(error.message || "Social login failed");
-        setIsLoading(false);
+        showErrorToast(error.message || "Social login failed");
+      } finally {
+        // Reset after a delay in case redirect doesn't happen
+        setTimeout(() => setIsLoading(false), 5000);
       }
     }
   };
-
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-6xl grid lg:grid-cols-2 gap-6 lg:gap-8 items-center">
@@ -174,6 +175,7 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
                   variant="outline" 
                   className="w-full"
                   onClick={() => handleSocialLogin("google")}
+                  disabled={isLoading}
                 >
                   <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
                     <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -182,8 +184,7 @@ export function AuthPage({ onLogin, onBack, onLogoClick }: AuthPageProps) {
                     <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
                   </svg>
                   Continue with Google
-                </Button>
-                
+                </Button>                
                 <div className="relative">
                   <div className="absolute inset-0 flex items-center">
                     <Separator />

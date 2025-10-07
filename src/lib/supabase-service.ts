@@ -26,7 +26,7 @@ export const authService = {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || 'https://your-production-domain.com'
+        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || window.location.origin
       }
     })
     return { data, error }
@@ -38,8 +38,20 @@ export const authService = {
   },
 
   getCurrentUser: async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    return user
+    try {
+      const { data: { user }, error } = await supabase.auth.getUser()
+      if (error) throw error
+      return user
+    } catch (err: any) {
+      // Fallback: if network/CORS blocks getUser, try local session
+      try {
+        const { data: { session }, error: sessErr } = await supabase.auth.getSession()
+        if (sessErr) throw sessErr
+        return session?.user || null
+      } catch (e) {
+        return null
+      }
+    }
   },
 
   onAuthStateChange: (callback: (event: string, session: any) => void) => {
@@ -218,49 +230,38 @@ export const groupService = {
 
       if (groupError) return { data: null, error: groupError }
 
-      // Get pending invitations for this group
-      const { data: invitations, error: invitationsError } = await supabase
-        .from('invitations')
-        .select('id, invitee_email, status, created_at, token')
-        .eq('group_id', groupId)
-        .eq('status', 'pending')
-        .gt('expires_at', new Date().toISOString())
+      // Fetch members + pending invites via RPC (ensures names for pending)
+      const { data: memberRows, error: memberErr } = await supabase
+        .rpc('get_group_members_with_status', { p_group_id: groupId })
 
-      if (invitationsError) {
-        console.warn('Could not fetch invitations:', invitationsError)
+      if (memberErr) {
+        console.warn('Could not fetch members via RPC, falling back:', memberErr)
+        return { data: groupData, error: null }
       }
 
-      // Add invitations to the group data as pseudo-members
-      const pendingMembers = (invitations || []).map(invitation => ({
-        id: `invitation-${invitation.id}`,
-        user_id: null,
-        role: 'member',
-        joined_at: invitation.created_at,
-        status: 'pending',
-        email: invitation.invitee_email,
-        profiles: null,
-        invitation: invitation
-      }))
+      const rpcMembers = (memberRows || []).map((row: any, idx: number) => {
+        const isActive = row.status === 'active'
+        return {
+          id: isActive && row.user_id ? `${row.user_id}` : `invitation-${idx}`,
+          user_id: row.user_id,
+          role: 'member',
+          joined_at: groupData.created_at,
+          status: row.status,
+          email: row.email,
+          profiles: { id: (row.user_id || `pending-${idx}`), full_name: row.display_name, email: row.email },
+          invitation: row.source === 'invitation' ? { invitee_email: row.email, status: 'pending' } : null
+        }
+      })
 
-      // Combine real members with pending invitations
-      const allMembers = [
-        ...(groupData.group_members || []).map(member => ({
-          ...member,
-          status: 'active'
-        })),
-        ...pendingMembers
-      ]
-
-      return {
-        data: {
-          ...groupData,
-          group_members: allMembers
-        },
-        error: null
-      }
+      return { data: { ...groupData, group_members: rpcMembers }, error: null }
     } catch (error) {
       return { data: null, error }
     }
+  },
+  // Lightweight fetch for Add Expense modal to ensure newly added/accepted members are visible
+  getGroupMembersWithStatus: async (groupId: string) => {
+    const { data, error } = await supabase.rpc('get_group_members_with_status', { p_group_id: groupId })
+    return { data, error }
   },
 
   addMemberToGroup: async (groupId: string, email: string) => {
@@ -325,6 +326,68 @@ export const groupService = {
       .eq('user_id', user.id)
 
     return { data: null, error }
+  },
+
+  transferOwnership: async (groupId: string, newOwnerUserId: string) => {
+    const user = await authService.getCurrentUser()
+    if (!user) return { data: null, error: { message: 'User not authenticated' } }
+
+    try {
+      // Preferred path: RPC handles RLS-sensitive update under SECURITY DEFINER
+      try {
+        const { data: rpcData, error: rpcError } = await supabase.rpc('transfer_group_ownership', {
+          p_group_id: groupId,
+          p_new_owner_id: newOwnerUserId
+        })
+        if (!rpcError && rpcData && (rpcData.ok || rpcData.success)) {
+          return { data: rpcData, error: null }
+        }
+        // If RPC exists but returned error object, surface it
+        if (rpcError && (rpcError as any)?.code !== 'PGRST404') {
+          return { data: null, error: rpcError }
+        }
+      } catch (e) {
+        // Ignore and fall back to direct update under RLS if RPC is missing
+      }
+
+      // Ensure caller is current owner
+      const { data: group, error: fetchErr } = await supabase
+        .from('groups')
+        .select('id, created_by')
+        .eq('id', groupId)
+        .single()
+      if (fetchErr) return { data: null, error: fetchErr }
+      if (!group || group.created_by !== user.id) return { data: null, error: { message: 'Only the current owner can transfer ownership' } }
+
+      // Ensure target user is a member of the group
+      const { data: member, error: memberErr } = await supabase
+        .from('group_members')
+        .select('id')
+        .eq('group_id', groupId)
+        .eq('user_id', newOwnerUserId)
+        .single()
+      if (memberErr || !member) return { data: null, error: { message: 'Selected user is not a member of this group' } }
+
+      // Perform the transfer
+      const { data: updated, error: updateErr } = await supabase
+        .from('groups')
+        .update({ created_by: newOwnerUserId })
+        .eq('id', groupId)
+        .select('id, created_by')
+        .single()
+      if (updateErr) return { data: null, error: updateErr }
+
+      // Optionally elevate the new owner to admin role if roles are used
+      await supabase
+        .from('group_members')
+        .update({ role: 'admin' })
+        .eq('group_id', groupId)
+        .eq('user_id', newOwnerUserId)
+
+      return { data: updated, error: null }
+    } catch (error) {
+      return { data: null, error }
+    }
   }
 }
 
@@ -340,17 +403,7 @@ export const expenseService = {
     const user = await authService.getCurrentUser()
     if (!user) return { data: null, error: { message: 'User not authenticated' } }
 
-    // Check if user is a member of the group
-    const { data: membership, error: membershipError } = await supabase
-      .from('group_members')
-      .select('id')
-      .eq('group_id', groupId)
-      .eq('user_id', user.id)
-      .single()
-
-    if (membershipError || !membership) {
-      return { data: null, error: { message: 'User is not a member of this group' } }
-    }
+    // Rely on RLS to enforce membership at insert time (avoids false negatives from RPC visibility)
 
     // Create the expense
     const { data: expense, error: expenseError } = await supabase
@@ -367,6 +420,12 @@ export const expenseService = {
       .single()
 
     if (expenseError) {
+      // Prefer structured error properties over brittle message checks
+      const code = (expenseError as any)?.code
+      const status = (expenseError as any)?.status
+      if (code === 'PGRST301' || code === '42501' || status === 403) {
+        return { data: null, error: { message: 'User is not a member of this group' } }
+      }
       return { data: null, error: expenseError }
     }
 
@@ -376,18 +435,38 @@ export const expenseService = {
       user_id: split.user_id,
       amount: split.amount
     }))
-
-    const { data: splitsResult, error: splitsError } = await supabase
+    const { error: splitsError } = await supabase
       .from('expense_splits')
       .insert(splitsData)
       .select()
 
     if (splitsError) {
-      // If splits fail, we should probably delete the expense, but for now just return error
+      // Clean up the orphaned expense
+      await supabase.from('expenses').delete().eq('id', expense.id)
       return { data: null, error: splitsError }
     }
 
     return { data: expense, error: null }
+  },
+
+  // Batched balances for multiple groups using the existing per-group calculator
+  getUserBalancesForGroups: async (groupIds: string[]) => {
+    try {
+      const results = await Promise.all(
+        (groupIds || []).map(async (gid) => {
+          const { data, error } = await expenseService.getUserBalance(gid)
+          if (error || !data || !Array.isArray(data) || data.length === 0) {
+            return { group_id: gid, net_balance: 0 }
+          }
+          // getUserBalance(groupId) returns array with net_balance
+          const net = (data[0] as any)?.net_balance ?? 0
+          return { group_id: gid, net_balance: Number(net) || 0 }
+        })
+      )
+      return { data: results, error: null as any }
+    } catch (error) {
+      return { data: [], error }
+    }
   },
 
   // Join-safe, columns-only selection; app composes details
@@ -407,19 +486,53 @@ export const expenseService = {
       const user = await authService.getCurrentUser()
       if (!user) return { data: [], error: { message: 'User not authenticated' } }
   
-      // Phase 1: Get recent expenses (minimal columns)
-      const { data: expenses, error: expensesError } = await supabase
+      // Phase 1a: Get expenses where the user is the payer
+      const { data: payerExpenses, error: payerError } = await supabase
         .from('expenses')
         .select('id, description, amount, category, created_at, payer_id, group_id')
-        .or(`payer_id.eq.${user.id},expense_splits.user_id.eq.${user.id}`)
+        .eq('payer_id', user.id)
         .order('created_at', { ascending: false })
         .limit(limit)
-  
-      if (expensesError) {
-        console.error('Error fetching expenses:', expensesError)
-        return { data: [], error: expensesError }
+
+      if (payerError) {
+        console.error('Error fetching payer expenses:', payerError)
+        return { data: [], error: payerError }
       }
-  
+
+      // Phase 1b: Find expenses where the user has splits
+      const { data: userSplits, error: splitsError } = await supabase
+        .from('expense_splits')
+        .select('expense_id')
+        .eq('user_id', user.id)
+        .limit(limit)
+
+      if (splitsError) {
+        console.error('Error fetching user splits:', splitsError)
+        return { data: [], error: splitsError }
+      }
+
+      const splitExpenseIds = (userSplits || []).map(s => s.expense_id)
+
+      let splitExpenses: any[] = []
+      if (splitExpenseIds.length > 0) {
+        const { data, error } = await supabase
+          .from('expenses')
+          .select('id, description, amount, category, created_at, payer_id, group_id')
+          .in('id', splitExpenseIds)
+          .order('created_at', { ascending: false })
+
+        if (!error) splitExpenses = data || []
+      }
+
+      // Merge, dedupe, sort, limit
+      const expenseMap = new Map<string, any>()
+      ;[...(payerExpenses || []), ...splitExpenses].forEach((exp: any) => {
+        expenseMap.set(exp.id, exp)
+      })
+      const expenses = Array.from(expenseMap.values())
+        .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, limit)
+
       if (!expenses || expenses.length === 0) {
         return { data: [], error: null }
       }
@@ -519,9 +632,11 @@ export const expenseService = {
         let amountOwed = 0
         let amountOwes = 0
 
-        balanceData?.forEach(split => {
+        balanceData?.forEach((split: any) => {
           if (!split.is_settled) {
-            if (split.expenses.payer_id === user.id) {
+            const exp = Array.isArray(split.expenses) ? split.expenses[0] : split.expenses;
+            const payerId = exp?.payer_id;
+            if (payerId === user.id) {
               // Others owe user
               amountOwed += split.amount
             } else {
@@ -561,60 +676,40 @@ export const expenseService = {
     const user = await authService.getCurrentUser()
     if (!user) return { data: null, error: { message: 'User not authenticated' } }
 
-    // Find unsettled expense splits that can be settled (join-safe selection)
-    const { data: splitsToSettle, error: fetchError } = await supabase
-      .from('expense_splits')
-      .select('id, amount, expense_id, is_settled')
-      .eq('user_id', fromUserId)
-      .eq('is_settled', false)
-      .order('created_at', { ascending: true })
+    // Delegate to server-side RPC for atomic settle + logging
+    const { data, error } = await supabase.rpc('settle_group_debt', {
+      p_group_id: groupId,
+      p_from_user: fromUserId,
+      p_to_user: toUserId,
+      p_amount: amount
+    })
 
-    if (fetchError) return { data: null, error: fetchError }
-
-    // For each split, fetch the expense minimal details (payer_id, group_id) separately
-    let remainingAmount = amount
-    const settledSplits: string[] = []
-
-    for (const split of splitsToSettle || []) {
-      if (remainingAmount <= 0) break
-      const { data: exp, error: expErr } = await supabase
-        .from('expenses')
-        .select('id, payer_id, group_id')
-        .eq('id', split.expense_id)
-        .single()
-
-      if (expErr || !exp) continue
-      if (exp.payer_id === toUserId && exp.group_id === groupId) {
-        const settleAmount = Math.min(split.amount, remainingAmount)
-
-        // Verify user can settle this split (either the payer or the one who owes)
-        if (exp.payer_id !== user.id && fromUserId !== user.id) {
-          console.error(`User cannot settle split ${split.id}`)
-          continue
-        }
-
-        // Update the expense split directly
-        const { error: settleError } = await supabase
-          .from('expense_splits')
-          .update({
-            is_settled: true,
-            settled_at: new Date().toISOString()
-          })
-          .eq('id', split.id)
-
-        if (settleError) {
-          console.error(`Error settling split ${split.id}:`, settleError)
-          continue
-        }
-        settledSplits.push(split.id)
-        remainingAmount -= settleAmount
+    if (error) {
+      // Prefer structured fields to detect missing RPC, fall back to message matching
+      const status = (error as any)?.status
+      const code = String((error as any)?.code || '').toUpperCase()
+      const structuredMissing = status === 404 || code === '404' || code === 'PGRST404'
+      const msg = String((error as any)?.message || '').toLowerCase()
+      const details = String((error as any)?.details || '').toLowerCase()
+      const hint = String((error as any)?.hint || '').toLowerCase()
+      const textMissing = [msg, details, hint].some(t =>
+        t.includes('not found') ||
+        t.includes('does not exist') ||
+        t.includes('could not find')
+      )
+      const isMissing = structuredMissing || textMissing
+      if (isMissing) {
+        // RPC not available - settlement requires atomic transaction
+        return { data: null, error: { message: 'Settlement feature requires database function setup. Please contact support.' } }
       }
+      return { data: null, error }
     }
 
     return {
       data: {
-        settled_splits: settledSplits,
-        remaining_amount: remainingAmount
+        settled_splits: data?.settled_splits || [],
+        settled_amount: data?.settled_amount || 0,
+        remaining_amount: data?.remaining_amount || 0
       },
       error: null
     }
@@ -694,13 +789,15 @@ export const invitationService = {
 
       if (inviteError) return { data: null, error: inviteError }
 
-      // Try Edge Function for email delivery (optional)
-      try {
-        await supabase.functions.invoke('invite-user', {
-          body: { groupId, email, token: invitation.token }
-        })
-      } catch (emailError) {
-        console.warn('Email delivery failed, but invitation created:', emailError)
+      // Optional: Try Edge Function for email delivery only if enabled
+      if ((import.meta as any).env?.VITE_ENABLE_INVITE_EMAIL === 'true') {
+        try {
+          await supabase.functions.invoke('invite-user', {
+            body: { groupId, email, token: invitation.token }
+          })
+        } catch (emailError) {
+          console.warn('Email delivery failed (or CORS), but invitation created:', emailError)
+        }
       }
 
       return { data: { ok: true, token: invitation.token }, error: null }
@@ -709,12 +806,26 @@ export const invitationService = {
       return { data: null, error }
     }
   },
+  // Fetch pending invitations for a group (join-safe, minimal columns)
+  getPendingInvitations: async (groupId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('invitations')
+        .select('id, invitee_email, created_at, token, status')
+        .eq('group_id', groupId)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+
+      if (error) return { data: null, error }
+      return { data, error: null }
+    } catch (error) {
+      return { data: null, error }
+    }
+  },
   acceptByToken: async (token: string) => {
     try {
-      // Use the SECURITY DEFINER RPC function to accept invitation
-      const { data: rpcData, error: rpcError } = await supabase.rpc('accept_group_invitation', {
-        p_token: token
-      })
+      // Use the updated RPC that accepts UUID tokens and notifies the inviter
+      const { data: rpcData, error: rpcError } = await supabase.rpc('accept_group_invitation', { p_token: token })
 
       if (rpcError) {
         console.error('RPC error accepting invitation:', rpcError)
@@ -726,6 +837,7 @@ export const invitationService = {
         return { data: null, error: { message: errorMessage } }
       }
 
+      // RPC returns { success: true, group_id }
       return { data: { ok: true, group_id: rpcData.group_id }, error: null }
     } catch (error) {
       console.error('Error accepting invitation:', error)

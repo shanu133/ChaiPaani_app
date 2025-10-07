@@ -36,6 +36,7 @@ export function CreateGroupModal({ isOpen, onClose, onCreateGroup }: CreateGroup
   const [currentUser, setCurrentUser] = useState<{ email: string; name: string; avatar: string } | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
     const fetchUser = async () => {
       try {
         setIsLoading(true);
@@ -44,9 +45,11 @@ export function CreateGroupModal({ isOpen, onClose, onCreateGroup }: CreateGroup
         // Add null check for user
         if (!user) {
           toast.error('You must be logged in to create a group');
-          if (onClose) onClose();
+          onClose();
           return;
         }
+        
+        if (!isMounted) return;
         
         // Process user data to set currentUser with correct format
         const name = user.user_metadata?.full_name || user.email || "User";
@@ -58,15 +61,21 @@ export function CreateGroupModal({ isOpen, onClose, onCreateGroup }: CreateGroup
       } catch (error) {
         console.error('Error fetching current user:', error);
         toast.error('Failed to load user information');
-        if (onClose) onClose();
+        onClose();
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
 
     if (isOpen) {
       fetchUser();
     }
+
+    return () => {
+      isMounted = false;
+    };
   }, [isOpen, onClose]);
 
   const categories = [

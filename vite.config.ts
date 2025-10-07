@@ -12,7 +12,10 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3000,
+    port: 3001, // lock to 3001 since 3000 is busy
+    strictPort: true, // fail if 3001 is busy instead of silently changing
+    host: true, // bind to 0.0.0.0 to allow LAN access
+    open: true, // open browser automatically
   },
   build: {
     outDir: 'build',

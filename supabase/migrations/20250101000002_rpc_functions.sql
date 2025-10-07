@@ -1,36 +1,32 @@
--- Function to create expense with splits
--- split_tolerance: The maximum allowed difference between the sum of splits and the total amount, to account for floating-point rounding issues. Adjust as needed for different currencies.
 CREATE OR REPLACE FUNCTION create_expense_with_splits(
   p_group_id UUID,
   p_description TEXT,
-  p_amount DECIMAL(10,2),
+  p_amount NUMERIC(10,2),
+  p_splits JSONB,
   p_category TEXT DEFAULT 'general',
   p_notes TEXT DEFAULT NULL,
-BEGIN
-  -- Get current user
-  v_user_id := auth.uid();
-
-  -- Guard tolerance (allow 0 to 0.05 by default; adjust if needed)
-  IF p_split_tolerance < 0 OR p_split_tolerance > 0.05 THEN
-    RAISE EXCEPTION 'Invalid p_split_tolerance (must be between 0 and 0.05). Got: %', p_split_tolerance;
-  END IF;
-
-  -- ...rest of your function logic...
-END;)
+  p_split_tolerance NUMERIC(10,2) DEFAULT 0.01
+)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
   v_expense_id UUID;
-  v_split_record JSONB;
-  v_total_split_amount DECIMAL(10,2) := 0;
+  v_total_split_amount NUMERIC(10,2) := 0;
   v_user_id UUID;
+  v_split_user_id UUID;
+  v_split_amount NUMERIC(10,2);
 BEGIN
   -- Get current user
   v_user_id := auth.uid();
   IF v_user_id IS NULL THEN
     RAISE EXCEPTION 'User not authenticated';
+  END IF;
+
+  -- Guard tolerance (allow 0 to 0.05 by default; adjust if needed)
+  IF p_split_tolerance < 0 OR p_split_tolerance > 0.05 THEN
+    RAISE EXCEPTION 'Invalid p_split_tolerance (must be between 0 and 0.05). Got: %', p_split_tolerance;
   END IF;
 
   -- Verify user is member of the group
@@ -41,11 +37,15 @@ BEGIN
     RAISE EXCEPTION 'User is not a member of this group';
   END IF;
 
-  -- Calculate total split amount
-  FOR v_split_record IN SELECT * FROM jsonb_array_elements(p_splits)
-  LOOP
-    v_total_split_amount := v_total_split_amount + (v_split_record->>'amount')::DECIMAL(10,2);
-  END LOOP;
+  -- Validate presence of at least one split
+  IF p_splits IS NULL OR jsonb_array_length(p_splits) = 0 THEN
+    RAISE EXCEPTION 'At least one expense split is required';
+  END IF;
+
+  -- Calculate total split amount in one pass
+  SELECT COALESCE(SUM((elem->>'amount')::NUMERIC(10,2)), 0)
+  INTO v_total_split_amount
+  FROM jsonb_array_elements(p_splits) AS elem;
 
   -- Verify split amounts add up to expense amount (allow small rounding differences)
   IF ABS(v_total_split_amount - p_amount) > p_split_tolerance THEN
@@ -58,14 +58,22 @@ BEGIN
   RETURNING id INTO v_expense_id;
 
   -- Create expense splits
-  FOR v_split_record IN SELECT * FROM jsonb_array_elements(p_splits)
+  FOR v_split_user_id, v_split_amount IN
+    SELECT (elem->>'user_id')::UUID AS user_id,
+           (elem->>'amount')::NUMERIC(10,2) AS amount
+    FROM jsonb_array_elements(p_splits) AS elem
   LOOP
+    IF NOT EXISTS (
+      SELECT 1
+      FROM group_members gm
+      WHERE gm.group_id = p_group_id
+        AND gm.user_id = v_split_user_id
+    ) THEN
+      RAISE EXCEPTION 'Split user is not a member of the group or does not exist: %', v_split_user_id;
+    END IF;
+
     INSERT INTO expense_splits (expense_id, user_id, amount)
-    VALUES (
-      v_expense_id,
-      (v_split_record->>'user_id')::UUID,
-      (v_split_record->>'amount')::DECIMAL(10,2)
-    );
+    VALUES (v_expense_id, v_split_user_id, v_split_amount);
   END LOOP;
 
   RETURN jsonb_build_object(
@@ -228,18 +236,36 @@ BEGIN
   END IF;
 
   SELECT jsonb_build_object(
-    'total_expenses', COALESCE(SUM(e.amount), 0),
-    'expense_count', COUNT(DISTINCT e.id),
-    'member_count', COUNT(DISTINCT gm.user_id),
-    'unsettled_splits', COUNT(es.id) FILTER (WHERE es.is_settled = false),
-    'total_unsettled_amount', COALESCE(SUM(es.amount) FILTER (WHERE es.is_settled = false), 0)
+  WITH expense_stats AS (
+    SELECT 
+      COUNT(DISTINCT id)   AS expense_count,
+      COALESCE(SUM(amount), 0) AS total_expenses
+    FROM expenses
+    WHERE group_id = p_group_id
+  ),
+  member_stats AS (
+    SELECT
+      COUNT(DISTINCT user_id) AS member_count
+    FROM group_members
+    WHERE group_id = p_group_id
+  ),
+  split_stats AS (
+    SELECT 
+      COUNT(id) FILTER (WHERE is_settled = false)              AS unsettled_splits,
+      COALESCE(SUM(amount) FILTER (WHERE is_settled = false), 0) AS total_unsettled_amount
+    FROM expense_splits es
+    JOIN expenses e ON e.id = es.expense_id
+    WHERE e.group_id = p_group_id
+  )
+  SELECT jsonb_build_object(
+    'total_expenses',        es.total_expenses,
+    'expense_count',         es.expense_count,
+    'member_count',          ms.member_count,
+    'unsettled_splits',      ss.unsettled_splits,
+    'total_unsettled_amount', ss.total_unsettled_amount
   ) INTO v_result
-  FROM groups g
-  LEFT JOIN expenses e ON e.group_id = g.id
-  LEFT JOIN group_members gm ON gm.group_id = g.id
-  LEFT JOIN expense_splits es ON es.expense_id = e.id
-  WHERE g.id = p_group_id;
-
-  RETURN v_result;
+  FROM expense_stats es
+  CROSS JOIN member_stats ms
+  CROSS JOIN split_stats ss;  RETURN v_result;
 END;
 $$;

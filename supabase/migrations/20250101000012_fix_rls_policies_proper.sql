@@ -25,6 +25,49 @@ DROP POLICY IF EXISTS "users_update_own_membership" ON public.group_members;
 DROP POLICY IF EXISTS "group_creators_update_members" ON public.group_members;
 DROP POLICY IF EXISTS "users_delete_own_membership" ON public.group_members;
 DROP POLICY IF EXISTS "group_creators_delete_members" ON public.group_members;
+DROP POLICY IF EXISTS "settlements_select_policy" ON public.settlements;
+DROP POLICY IF EXISTS "settlements_insert_policy" ON public.settlements;
+DROP POLICY IF EXISTS "settlements_update_policy" ON public.settlements;
+DROP POLICY IF EXISTS "settlements_delete_policy" ON public.settlements;
+
+-- Ensure idempotency: drop policies created by this migration if they already exist
+-- Groups
+DROP POLICY IF EXISTS "groups_select_policy" ON public.groups;
+DROP POLICY IF EXISTS "groups_insert_policy" ON public.groups;
+DROP POLICY IF EXISTS "groups_update_policy" ON public.groups;
+DROP POLICY IF EXISTS "groups_delete_policy" ON public.groups;
+-- Group members
+DROP POLICY IF EXISTS "group_members_select_policy" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_insert_self_policy" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_insert_creator_policy" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_update_self_policy" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_update_creator_policy" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_delete_self_policy" ON public.group_members;
+DROP POLICY IF EXISTS "group_members_delete_creator_policy" ON public.group_members;
+-- Expenses
+DROP POLICY IF EXISTS "expenses_select_policy" ON public.expenses;
+DROP POLICY IF EXISTS "expenses_insert_policy" ON public.expenses;
+DROP POLICY IF EXISTS "expenses_update_policy" ON public.expenses;
+DROP POLICY IF EXISTS "expenses_delete_policy" ON public.expenses;
+-- Expense splits
+DROP POLICY IF EXISTS "expense_splits_select_policy" ON public.expense_splits;
+DROP POLICY IF EXISTS "expense_splits_insert_policy" ON public.expense_splits;
+DROP POLICY IF EXISTS "expense_splits_update_policy" ON public.expense_splits;
+DROP POLICY IF EXISTS "expense_splits_delete_policy" ON public.expense_splits;
+-- Invitations
+DROP POLICY IF EXISTS "invitations_select_policy" ON public.invitations;
+DROP POLICY IF EXISTS "invitations_insert_policy" ON public.invitations;
+DROP POLICY IF EXISTS "invitations_update_policy" ON public.invitations;
+DROP POLICY IF EXISTS "invitations_delete_policy" ON public.invitations;
+-- Notifications
+DROP POLICY IF EXISTS "notifications_select_policy" ON public.notifications;
+DROP POLICY IF EXISTS "notifications_insert_policy" ON public.notifications;
+DROP POLICY IF EXISTS "notifications_update_policy" ON public.notifications;
+DROP POLICY IF EXISTS "notifications_delete_policy" ON public.notifications;
+-- Profiles
+DROP POLICY IF EXISTS "profiles_select_policy" ON public.profiles;
+DROP POLICY IF EXISTS "profiles_update_policy" ON public.profiles;
+DROP POLICY IF EXISTS "profiles_insert_policy" ON public.profiles;
 
 -- GROUPS POLICIES
 -- Users can view groups they created or are members of
@@ -64,7 +107,16 @@ CREATE POLICY "group_members_select_policy" ON public.group_members
 
 -- Users can join groups (insert their own membership)
 CREATE POLICY "group_members_insert_self_policy" ON public.group_members
-  FOR INSERT WITH CHECK (user_id = auth.uid());
+  FOR INSERT WITH CHECK (
+    user_id = auth.uid()
+    AND EXISTS (
+      SELECT 1
+      FROM public.invitations i
+      WHERE i.group_id = group_members.group_id
+        AND i.status = 'accepted'
+        AND lower(i.invitee_email) = lower(coalesce((auth.jwt() ->> 'email'), ''))
+    )
+  );
 
 -- Group creators can add members
 CREATE POLICY "group_members_insert_creator_policy" ON public.group_members
@@ -170,6 +222,73 @@ CREATE POLICY "expense_splits_delete_policy" ON public.expense_splits
       SELECT id FROM public.expenses WHERE payer_id = auth.uid()
     )
   );
+
+-- SETTLEMENTS POLICIES
+-- Users can view settlements in groups they're members of
+CREATE POLICY "settlements_select_policy" ON public.settlements
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.group_members gm
+      WHERE gm.group_id = public.settlements.group_id
+        AND gm.user_id = auth.uid()
+    )
+  );
+
+-- Users can create settlements in groups they're members of, and only between members
+CREATE POLICY "settlements_insert_policy" ON public.settlements
+  FOR INSERT WITH CHECK (
+    -- inserting user is a member of the group
+    EXISTS (
+      SELECT 1 FROM public.group_members gm_self
+      WHERE gm_self.group_id = public.settlements.group_id
+        AND gm_self.user_id = auth.uid()
+    )
+    -- both payer and receiver are members of the same group
+    AND EXISTS (
+      SELECT 1 FROM public.group_members gm_payer
+      WHERE gm_payer.group_id = public.settlements.group_id
+        AND gm_payer.user_id = public.settlements.payer_id
+    )
+    AND EXISTS (
+      SELECT 1 FROM public.group_members gm_rcv
+      WHERE gm_rcv.group_id = public.settlements.group_id
+        AND gm_rcv.user_id = public.settlements.receiver_id
+    )
+    -- inserting user must be one of the parties
+    AND (auth.uid() = public.settlements.payer_id OR auth.uid() = public.settlements.receiver_id)
+  );
+
+-- Users can update settlements only if they're a party and remain valid under the same checks
+CREATE POLICY "settlements_update_policy" ON public.settlements
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM public.group_members gm
+      WHERE gm.group_id = public.settlements.group_id
+        AND gm.user_id = auth.uid()
+    )
+    AND (auth.uid() = public.settlements.payer_id OR auth.uid() = public.settlements.receiver_id)
+  ) WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.group_members gm_self
+      WHERE gm_self.group_id = public.settlements.group_id
+        AND gm_self.user_id = auth.uid()
+    )
+    AND EXISTS (
+      SELECT 1 FROM public.group_members gm_payer
+      WHERE gm_payer.group_id = public.settlements.group_id
+        AND gm_payer.user_id = public.settlements.payer_id
+    )
+    AND EXISTS (
+      SELECT 1 FROM public.group_members gm_rcv
+      WHERE gm_rcv.group_id = public.settlements.group_id
+        AND gm_rcv.user_id = public.settlements.receiver_id
+    )
+    AND (auth.uid() = public.settlements.payer_id OR auth.uid() = public.settlements.receiver_id)
+  );
+
+-- Users can delete settlements they created (payer)
+CREATE POLICY "settlements_delete_policy" ON public.settlements
+  FOR DELETE USING (payer_id = auth.uid());
 
 -- INVITATIONS POLICIES
 -- Users can view invitations they sent or received

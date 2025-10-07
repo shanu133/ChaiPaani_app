@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Separator } from "./ui/separator";
@@ -20,17 +19,9 @@ import {
   Bell,
   Shield,
   Palette,
-  Moon,
-  Sun,
-  Globe,
-  Smartphone,
-  Mail,
-  Lock,
   Trash2,
   Download,
   Upload,
-  CreditCard,
-  Settings,
   LogOut,
   Camera,
   Edit,
@@ -58,6 +49,7 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
   });
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -76,8 +68,8 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
         const user = await authService.getCurrentUser();
 
         setProfile({
-          name: data?.display_name || data?.full_name || user?.email || "User",
-          email: data?.email || user?.email || "",
+          name: (data?.display_name || data?.full_name || user?.email || "User") as string,
+          email: (data?.email || user?.email || "") as string,
           phone: "",
           defaultCurrency: "INR",
           language: "English",
@@ -122,24 +114,30 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
   });
 
   const handleSaveProfile = async () => {
-    try {
-      const displayName = profile.name?.trim();
-      if (!displayName) {
-        toast.error("Name cannot be empty");
-        return;
-      }
-      const { error } = await profileService.updateDisplayName(displayName);
-      if (error) {
-        toast.error(error.message || "Failed to update profile");
-        return;
-      }
-      setIsEditing(false);
-      toast.success("Profile updated successfully!");
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to update profile");
-    }
-  };
+  try {
+    setSavingProfile(true);
 
+    const displayName = profile.name?.trim();
+    if (!displayName) {
+      toast.error("Name cannot be empty");
+      return;
+    }
+
+    const { error } = await profileService.updateDisplayName(displayName);
+
+    if (error) {
+      toast.error(error.message || "Failed to update profile");
+      return;
+    }
+
+    setIsEditing(false);
+    toast.success("Profile updated successfully!");
+  } catch (e: any) {
+    toast.error(e?.message || "Failed to update profile");
+  } finally {
+    setSavingProfile(false);
+  }
+};
   const handleDeleteAccount = () => {
     toast.error("Account deletion requested. Please contact support.");
   };
@@ -249,6 +247,7 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                     variant={isEditing ? "outline" : "ghost"}
                     size="sm"
                     onClick={() => isEditing ? handleSaveProfile() : setIsEditing(true)}
+                    disabled={savingProfile}
                   >
                     {isEditing ? (
                       <>
@@ -372,11 +371,11 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                 
                 {isEditing && (
                   <div className="flex gap-2 pt-4">
-                    <Button onClick={handleSaveProfile}>
+                    <Button onClick={handleSaveProfile} disabled={savingProfile}>
                       <Save className="w-4 h-4 mr-2" />
-                      Save Changes
+                      {savingProfile ? 'Saving...' : 'Save Changes'}
                     </Button>
-                    <Button variant="outline" onClick={() => setIsEditing(false)}>
+                    <Button variant="outline" onClick={() => setIsEditing(false)} disabled={savingProfile}>
                       <X className="w-4 h-4 mr-2" />
                       Cancel
                     </Button>
@@ -653,7 +652,7 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                       <p className="font-medium">Import Data</p>
                       <p className="text-sm text-muted-foreground">Import data from other expense tracking apps</p>
                     </div>
-                    <Button variant="outline">
+                    <Button variant="outline" onClick={handleImportData}>
                       <Upload className="w-4 h-4 mr-2" />
                       Import
                     </Button>

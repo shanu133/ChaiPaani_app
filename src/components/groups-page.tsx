@@ -10,6 +10,7 @@ import { AddExpenseModal } from "./add-expense-modal";
 import { CreateGroupModal } from "./create-group-modal";
 import { SettleUpModal } from "./settle-up-modal";
 import { GroupMenuModal } from "./group-menu-modal";
+import { EditGroupModal } from "./edit-group-modal";
 import {
   Plus,
   Users,
@@ -25,11 +26,12 @@ import {
   Menu,
   X,
   ArrowLeft,
-  Calendar,
-  Loader2
+  Calendar
 } from "lucide-react";
-import { groupService, expenseService, authService } from "../lib/supabase-service";
+import { groupService, expenseService, authService, invitationService } from "../lib/supabase-service";
 import { supabase } from "../lib/supabase";
+import * as Sonner from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 
 interface GroupsPageProps {
   onLogout: () => void;
@@ -57,38 +59,68 @@ interface Group {
   }>;
 }
 
-interface SettleUpGroup {
-  id: string;
-  name: string;
-  description: string;
-  memberCount: number;
-  totalExpenses: number;
-  yourBalance: number;
-  category: string;
-  members: Array<{
-    id: string;
-    name: string;
-    avatar: string;
-  }>;
-}
+// interface SettleUpGroup { /* unused */ }
 
 export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: GroupsPageProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
-  const [showCreateGroup, setShowCreateGroup] = useState(false);
-  const [showSettleUp, setShowSettleUp] = useState(false);
   const [showGroupMenu, setShowGroupMenu] = useState(false);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [showEditGroup, setShowEditGroup] = useState(false);
+  const [showSettleUp, setShowSettleUp] = useState(false);
   const [groups, setGroups] = useState<Group[]>([]);
+  const openEditGroupModal = (group: { id: string; name: string }) => {
+    setSelectedGroup((prev) => {
+      // if we already have the full selectedGroup, keep other fields; else set minimal
+      if (prev && prev.id === group.id) return prev;
+      return {
+        id: group.id,
+        name: group.name,
+        description: "",
+        memberCount: 0,
+        totalExpenses: 0,
+        yourBalance: 0,
+        recentActivity: "",
+        category: "Other",
+        currency: "INR",
+        created_at: "",
+        created_by: currentUser?.id || "",
+        members: []
+      };
+    });
+    setShowEditGroup(true);
+  };
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [modalMembers, setModalMembers] = useState<{ id: string; name: string; avatar: string }[]>([]);
+  const [pendingGroups, setPendingGroups] = useState<Array<{ group_id: string; token: string; group_name: string; category: string; created_at: string }>>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [groupsError, setGroupsError] = useState<string | null>(null);
+  const [showGroupPicker, setShowGroupPicker] = useState(false);
+
+  const notify = {
+    error: (msg: string) => (Sonner as any)?.toast?.error ? (Sonner as any).toast.error(msg) : (Sonner as any)?.toast ? (Sonner as any).toast(msg) : alert(msg),
+    success: (msg: string) => (Sonner as any)?.toast?.success ? (Sonner as any).toast.success(msg) : (Sonner as any)?.toast ? (Sonner as any).toast(msg) : console.info(msg),
+  };
 
   // Fetch user groups on component mount
   useEffect(() => {
     fetchUserGroups();
     fetchCurrentUser();
+    fetchPendingInvitations();
   }, []);
+
+  const refreshAll = async () => {
+    try {
+      setRefreshing(true);
+      setGroupsError(null);
+      await Promise.all([fetchUserGroups(), fetchPendingInvitations()]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const fetchUserGroups = async () => {
     try {
@@ -97,7 +129,9 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
 
       if (error) {
         console.error("Error fetching groups:", error);
-        console.error("Failed to load groups");
+        const msg = typeof error === 'string' ? error : (error as any)?.message || 'Failed to load groups';
+        setGroupsError(msg);
+        notify.error(msg);
         return;
       }
 
@@ -152,10 +186,13 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
         });
 
         setGroups(transformedGroups);
+        setGroupsError(null);
       }
     } catch (error) {
       console.error("Error fetching groups:", error);
-      console.error("Failed to load groups");
+      const msg = typeof error === 'string' ? error : (error as any)?.message || 'Failed to load groups';
+      setGroupsError(msg);
+      notify.error(msg);
     } finally {
       setLoading(false);
     }
@@ -175,6 +212,19 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
       console.error("Error fetching current user:", error);
     }
   };
+
+  const fetchPendingInvitations = async () => {
+    try {
+      const { data, error } = await supabase.rpc('get_pending_invitations')
+      if (error) {
+        console.warn('Could not fetch pending invitations:', error)
+        return
+      }
+      setPendingGroups((data || []) as any)
+    } catch (e) {
+      console.warn('Error fetching pending invitations:', e)
+    }
+  }
 
 
   const filteredGroups = groups.filter(group =>
@@ -209,10 +259,7 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
     fetchUserGroups();
   };
 
-  const handleSettleUp = (settlementData: any) => {
-    // Update group balances after settlement
-    console.log("Settlement recorded successfully!");
-  };
+  // Removed unused handleSettleUp; inline callbacks now refresh data
 
   const handleGroupMenuAction = (group: Group, action: string) => {
     setSelectedGroup(group);
@@ -225,6 +272,39 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
         break;
       default:
         break;
+    }
+  };
+
+  const acceptPendingInvite = async (token: string) => {
+    const result = await invitationService.acceptByToken(token);
+    const error = result?.error;
+    const hasMessage = (e: unknown): e is { message?: string } => typeof e === 'object' && e !== null && 'message' in (e as Record<string, unknown>);
+    if (error) {
+      console.error('Failed to accept invitation:', error);
+      const msg = typeof error === 'string' ? error : hasMessage(error) ? (error.message || 'Failed to accept invitation') : 'Failed to accept invitation';
+      notify.error(msg);
+      return;
+    }
+    await fetchUserGroups();
+    await fetchPendingInvitations();
+    notify.success('Joined group successfully');
+  }
+
+  const openAddExpenseForGroup = async (group: Group) => {
+    setSelectedGroup(group);
+    try {
+      const { data } = await groupService.getGroupMembersWithStatus(group.id);
+      const active = (data || []).filter((r: any) => r.status === 'active');
+      const mapped = active.map((m: any) => ({
+        id: m.user_id,
+        name: m.display_name,
+        avatar: (m.display_name || 'UN').substring(0, 2).toUpperCase()
+      }));
+      setModalMembers(mapped);
+    } catch (_) {
+      setModalMembers(group.members);
+    } finally {
+      setShowAddExpense(true);
     }
   };
 
@@ -293,14 +373,16 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
           <div className="p-4 border-t">
             <Button
               className="w-full gap-2"
-              onClick={() => {
+              onClick={async () => {
                 if (groups.length === 0) {
-                  console.error("Please create a group first before adding expenses");
+                  notify.error("Please create a group first before adding expenses");
                   return;
                 }
-                // Use the first group for adding expenses from sidebar
-                setSelectedGroup(groups[0]);
-                setShowAddExpense(true);
+                if (groups.length === 1) {
+                  await openAddExpenseForGroup(groups[0]);
+                  return;
+                }
+                setShowGroupPicker(true);
               }}
               disabled={groups.length === 0}
             >
@@ -367,11 +449,27 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
             <Button variant="ghost" size="sm">
               <Bell className="w-5 h-5" />
             </Button>
+            <Button variant="outline" size="sm" onClick={refreshAll} disabled={refreshing}>
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </Button>
           </div>
         </header>
 
         {/* Content */}
         <main className="p-4 md:p-6 space-y-6">
+          {groupsError && (
+            <div className="p-3 border border-destructive/30 bg-destructive/10 text-destructive rounded-md flex items-center justify-between">
+              <span className="text-sm truncate">{groupsError}</span>
+              <div className="flex gap-2 ml-4">
+                <Button size="sm" variant="outline" onClick={() => fetchUserGroups()} disabled={loading}>
+                  Retry
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setGroupsError(null)}>
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          )}
           {/* Search and Actions */}
           <div className="flex flex-col sm:flex-row gap-4 justify-between">
             <div className="relative flex-1 max-w-md">
@@ -388,6 +486,38 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
               Create Group
             </Button>
           </div>
+
+          {/* Pending Invitations */}
+          {pendingGroups.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold">Pending invitations</h2>
+              </div>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {pendingGroups.map(pg => (
+                  <Card key={`pending-${pg.group_id}-${pg.token}`} className="hover:shadow-lg transition-all">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1 flex-1">
+                          <CardTitle className="text-lg leading-tight">{pg.group_name}</CardTitle>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="capitalize">{pg.category || 'general'}</Badge>
+                            <span className="text-xs text-muted-foreground">Invited on {new Date(pg.created_at).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                        <Badge variant="secondary">Invited</Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => acceptPendingInvite(pg.token)}>Join</Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Groups Grid */}
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -448,7 +578,15 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
                 </div>
               ) : (
                 filteredGroups.map((group) => (
-                  <Card key={group.id} className="hover:shadow-lg transition-all hover:-translate-y-1 cursor-pointer" onClick={() => handleGroupClick(group)}>
+                  <Card
+                    key={group.id}
+                    className="hover:shadow-lg transition-all hover:-translate-y-1 cursor-pointer"
+                    onClick={(e) => {
+                      const target = e.target as HTMLElement
+                      if (target.closest('[data-no-nav]')) return
+                      handleGroupClick(group)
+                    }}
+                  >
                     <CardHeader className="pb-3">
                       <div className="flex items-start justify-between">
                         <div className="space-y-1 flex-1">
@@ -459,8 +597,10 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
                           variant="ghost"
                           size="sm"
                           className="p-1 h-auto"
+                          data-no-nav
                           onClick={(e: React.MouseEvent) => {
                             e.stopPropagation();
+                            e.preventDefault();
                             handleGroupMenuAction(group, 'menu');
                           }}
                         >
@@ -528,20 +668,30 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
 
                       {/* Quick Actions */}
                       <div className="flex gap-2 pt-2">
-                        <Button variant="outline" size="sm" className="flex-1 min-w-0 text-xs" onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          setSelectedGroup(group);
-                          setShowAddExpense(true);
-                        }}>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 min-w-0 text-xs"
+                          data-no-nav
+                          onClick={async (e: React.MouseEvent) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            await openAddExpenseForGroup(group);
+                          }}
+                        >
                           <Plus className="w-3 h-3 mr-1 flex-shrink-0" />
                           <span className="truncate">Add Expense</span>
                         </Button>
                         <Button
+                          type="button"
                           variant="outline"
                           size="sm"
                           className="flex-1 min-w-0 text-xs"
+                          data-no-nav
                           onClick={(e: React.MouseEvent) => {
                             e.stopPropagation();
+                            e.preventDefault();
                             handleGroupMenuAction(group, 'settle');
                           }}
                         >
@@ -559,15 +709,40 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
       </div>
 
       {/* Modals */}
+      <Dialog open={showGroupPicker} onOpenChange={(open) => setShowGroupPicker(open)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Select a group</DialogTitle>
+            <DialogDescription>Choose a group to add your expense to.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-80 overflow-auto">
+            {groups.map((g) => (
+              <Button
+                key={`pick-${g.id}`}
+                variant="ghost"
+                className="w-full justify-between"
+                onClick={async () => {
+                  setShowGroupPicker(false);
+                  await openAddExpenseForGroup(g);
+                }}
+              >
+                <span className="truncate text-left">{g.name}</span>
+                <Badge variant="outline" className="ml-2">{g.category}</Badge>
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <AddExpenseModal
-        isOpen={showAddExpense}
+        isOpen={!!selectedGroup?.id && showAddExpense}
         onClose={() => {
           setShowAddExpense(false);
           setSelectedGroup(null);
         }}
-        groupMembers={selectedGroup?.members || []}
+        groupMembers={(modalMembers && modalMembers.length > 0) ? modalMembers : (selectedGroup?.members || [])}
         currentUser={currentUser}
-        groupId={selectedGroup?.id || "demo-group"}
+        groupId={selectedGroup?.id || ""}
         onExpenseCreated={() => {
           console.log("Expense created successfully");
           fetchUserGroups(); // Refresh groups data
@@ -591,10 +766,13 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
           name: selectedGroup.name,
           members: selectedGroup.members
         } : undefined}
-        onSettleUp={handleSettleUp}
+        onSettleUp={() => {
+          // After settling, refresh groups to sync balances and recent activity
+          fetchUserGroups();
+        }}
       />
 
-      {selectedGroup && (
+      {selectedGroup && showGroupMenu && (
         <GroupMenuModal
           groupId={selectedGroup.id}
           groupName={selectedGroup.name}
@@ -618,8 +796,26 @@ export function GroupsPage({ onLogout, onBack, onLogoClick, onGoToGroup }: Group
             setShowGroupMenu(false);
             setSelectedGroup(null);
           }}
+          openEditGroupModal={openEditGroupModal}
         />
       )}
+
+      {/* Edit Group Modal */}
+      <EditGroupModal
+        isOpen={showEditGroup}
+        onClose={() => setShowEditGroup(false)}
+        group={selectedGroup ? {
+          id: selectedGroup.id,
+          name: selectedGroup.name,
+          description: selectedGroup.description,
+          category: selectedGroup.category
+        } : undefined}
+        onGroupUpdated={() => {
+          // Refresh groups to reflect updated details
+          fetchUserGroups();
+          setShowEditGroup(false);
+        }}
+      />
 
     </div>
   );

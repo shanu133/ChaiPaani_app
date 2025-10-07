@@ -1,5 +1,5 @@
--- Fix infinite recursion in RLS policies - Simplified Approach
--- This script completely replaces all problematic policies with simple, non-recursive ones
+-- Fix infinite recursion in RLS policies - Non-recursive, one-directional approach
+-- This script resets policies with a dynamic drop and recreates safe, non-recursive policies.
 
 -- First, disable RLS temporarily to clear all policies
 ALTER TABLE public.groups DISABLE ROW LEVEL SECURITY;
@@ -10,56 +10,57 @@ ALTER TABLE public.settlements DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.invitations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.activities DISABLE ROW LEVEL SECURITY;
 
--- Drop all existing policies to start fresh
-DROP POLICY IF EXISTS "groups_creators_can_select" ON public.groups;
-DROP POLICY IF EXISTS "groups_members_can_select" ON public.groups;
-DROP POLICY IF EXISTS "groups_insert_policy" ON public.groups;
-DROP POLICY IF EXISTS "groups_update_policy" ON public.groups;
-DROP POLICY IF EXISTS "groups_delete_policy" ON public.groups;
+-- Cleanup: ensure any leftover helper views from prior runs are removed (RLS not supported on views)
+DROP VIEW IF EXISTS public.owner_member_view;
 
-DROP POLICY IF EXISTS "group_members_select_own" ON public.group_members;
-DROP POLICY IF EXISTS "group_members_select_as_creator" ON public.group_members;
-DROP POLICY IF EXISTS "group_members_insert_self" ON public.group_members;
-DROP POLICY IF EXISTS "group_members_insert_as_creator" ON public.group_members;
-DROP POLICY IF EXISTS "group_members_insert_via_invitation" ON public.group_members;
-DROP POLICY IF EXISTS "group_members_insert_self_on_creation" ON public.group_members;
-DROP POLICY IF EXISTS "group_members_update_own" ON public.group_members;
-DROP POLICY IF EXISTS "group_members_update_as_creator" ON public.group_members;
-DROP POLICY IF EXISTS "group_members_delete_own" ON public.group_members;
-DROP POLICY IF EXISTS "group_members_delete_as_creator" ON public.group_members;
-
--- Drop all other table policies
-DROP POLICY IF EXISTS "expenses_select_own" ON public.expenses;
-DROP POLICY IF EXISTS "expenses_select_as_member" ON public.expenses;
-DROP POLICY IF EXISTS "expenses_insert_policy" ON public.expenses;
-DROP POLICY IF EXISTS "expenses_update_policy" ON public.expenses;
-DROP POLICY IF EXISTS "expenses_delete_policy" ON public.expenses;
-
-DROP POLICY IF EXISTS "expense_splits_select_policy" ON public.expense_splits;
-DROP POLICY IF EXISTS "expense_splits_insert_policy" ON public.expense_splits;
-DROP POLICY IF EXISTS "expense_splits_update_policy" ON public.expense_splits;
-DROP POLICY IF EXISTS "expense_splits_delete_policy" ON public.expense_splits;
-
-DROP POLICY IF EXISTS "settlements_select_policy" ON public.settlements;
-DROP POLICY IF EXISTS "settlements_insert_policy" ON public.settlements;
-DROP POLICY IF EXISTS "settlements_update_policy" ON public.settlements;
-
-DROP POLICY IF EXISTS "invitations_select_policy" ON public.invitations;
-DROP POLICY IF EXISTS "invitations_insert_policy" ON public.invitations;
-DROP POLICY IF EXISTS "invitations_update_policy" ON public.invitations;
-DROP POLICY IF EXISTS "invitations_delete_policy" ON public.invitations;
-
-DROP POLICY IF EXISTS "notifications_select_policy" ON public.notifications;
-DROP POLICY IF EXISTS "notifications_insert_policy" ON public.notifications;
-DROP POLICY IF EXISTS "notifications_update_policy" ON public.notifications;
-DROP POLICY IF EXISTS "notifications_delete_policy" ON public.notifications;
-
-DROP POLICY IF EXISTS "profiles_select_policy" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_update_policy" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_insert_policy" ON public.profiles;
+-- Dynamically drop ALL existing policies on target tables to avoid leftovers with different names
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename IN (
+        'groups','group_members','expenses','expense_splits','settlements',
+        'invitations','notifications','profiles','activities'
+      )
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END$$;
 
 -- Create simple, non-recursive policies
+
+-- Helper functions to avoid recursive policy evaluation.
+-- These run as SECURITY DEFINER and bypass RLS for internal membership checks.
+CREATE OR REPLACE FUNCTION public.is_group_member(p_group_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.group_members gm
+    WHERE gm.group_id = p_group_id AND gm.user_id = auth.uid()
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_group_owner(p_group_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.groups g
+    WHERE g.id = p_group_id AND g.created_by = auth.uid()
+  );
+$$;
 
 -- PROFILES - Allow everyone to read (needed for UI), users can update own
 CREATE POLICY "profiles_read_all" ON public.profiles
@@ -75,93 +76,55 @@ CREATE POLICY "profiles_insert_own" ON public.profiles
 CREATE POLICY "groups_owner_all" ON public.groups
   FOR ALL USING (created_by = auth.uid());
 
--- Allow reading groups if user is a member (simple subquery, no recursion)
+-- Allow reading groups if user is a member (via definer function to avoid recursion)
 CREATE POLICY "groups_member_read" ON public.groups
+  FOR SELECT USING (public.is_group_member(id));
+
+-- GROUP_MEMBERS - allow self operations and owners to manage their group's members
+CREATE POLICY "group_members_read_self_or_owner" ON public.group_members
   FOR SELECT USING (
-    id IN (
-      SELECT group_id FROM public.group_members 
-      WHERE user_id = auth.uid()
-    )
+    user_id = auth.uid() OR public.is_group_owner(group_id)
   );
 
--- GROUP_MEMBERS - Simple policies without cross-references
-CREATE POLICY "group_members_read_own" ON public.group_members
-  FOR SELECT USING (user_id = auth.uid());
-
--- Allow group owners to see all members of their groups (direct ownership check)
-CREATE POLICY "group_members_owner_read" ON public.group_members
-  FOR SELECT USING (
-    group_id IN (
-      SELECT id FROM public.groups 
-      WHERE created_by = auth.uid()
-    )
-  );
-
-CREATE POLICY "group_members_insert_own" ON public.group_members
-  FOR INSERT WITH CHECK (user_id = auth.uid());
-
--- Allow group owners to add members (direct ownership check)
-CREATE POLICY "group_members_owner_insert" ON public.group_members
+CREATE POLICY "group_members_insert_self_or_owner" ON public.group_members
   FOR INSERT WITH CHECK (
-    group_id IN (
-      SELECT id FROM public.groups 
-      WHERE created_by = auth.uid()
-    )
+    user_id = auth.uid() OR public.is_group_owner(group_id)
   );
 
-CREATE POLICY "group_members_update_own" ON public.group_members
-  FOR UPDATE USING (user_id = auth.uid());
-
-CREATE POLICY "group_members_owner_update" ON public.group_members
+CREATE POLICY "group_members_update_self_or_owner" ON public.group_members
   FOR UPDATE USING (
-    group_id IN (
-      SELECT id FROM public.groups 
-      WHERE created_by = auth.uid()
-    )
+    user_id = auth.uid() OR public.is_group_owner(group_id)
   );
 
-CREATE POLICY "group_members_delete_own" ON public.group_members
-  FOR DELETE USING (user_id = auth.uid());
-
-CREATE POLICY "group_members_owner_delete" ON public.group_members
+CREATE POLICY "group_members_delete_self_or_owner" ON public.group_members
   FOR DELETE USING (
-    group_id IN (
-      SELECT id FROM public.groups 
-      WHERE created_by = auth.uid()
-    )
+    user_id = auth.uid() OR public.is_group_owner(group_id)
   );
 
--- EXPENSES - Simple member-based access
+-- EXPENSES - members or owners of the group
 CREATE POLICY "expenses_member_all" ON public.expenses
   FOR ALL USING (
-    group_id IN (
-      SELECT group_id FROM public.group_members 
-      WHERE user_id = auth.uid()
-    )
+    public.is_group_member(group_id) OR public.is_group_owner(group_id)
   );
 
--- EXPENSE_SPLITS - Simple member-based access
+-- EXPENSE_SPLITS - a user can see their own, or members/owners of the parent expense's group
 CREATE POLICY "expense_splits_member_all" ON public.expense_splits
   FOR ALL USING (
     user_id = auth.uid()
-    OR expense_id IN (
-      SELECT id FROM public.expenses e
-      WHERE e.group_id IN (
-        SELECT group_id FROM public.group_members 
-        WHERE user_id = auth.uid()
-      )
+    OR EXISTS (
+      SELECT 1 FROM public.expenses e
+      WHERE e.id = expense_splits.expense_id
+        AND (public.is_group_member(e.group_id) OR public.is_group_owner(e.group_id))
     )
   );
 
--- SETTLEMENTS - Simple member-based access
+-- SETTLEMENTS - participants or members/owners of the group
 CREATE POLICY "settlements_member_all" ON public.settlements
   FOR ALL USING (
-    from_user_id = auth.uid()
-    OR to_user_id = auth.uid()
-    OR group_id IN (
-      SELECT group_id FROM public.group_members 
-      WHERE user_id = auth.uid()
-    )
+    payer_id = auth.uid()
+    OR receiver_id = auth.uid()
+    OR public.is_group_member(group_id)
+    OR public.is_group_owner(group_id)
   );
 
 -- INVITATIONS - Simple policies
@@ -188,6 +151,37 @@ ALTER TABLE public.settlements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.invitations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.activities ENABLE ROW LEVEL SECURITY;
+
+-- ACTIVITIES - simple read policy if your schema tracks group_id on activities
+-- Safely allow members to read their groups' activities without referencing groups
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'activities' AND column_name = 'group_id'
+  ) THEN
+    -- Make idempotent: drop then create policy
+    EXECUTE 'DROP POLICY IF EXISTS "activities_member_read" ON public.activities';
+    EXECUTE 'CREATE POLICY "activities_member_read" ON public.activities '
+         || 'FOR SELECT USING (public.is_group_member(group_id) OR public.is_group_owner(group_id))';
+  END IF;
+END$$;
+
+-- Optional helper: Owner/admin visibility to group members via SECURITY DEFINER function
+-- Use this function in RPC or server-side queries to fetch members for groups you own.
+CREATE OR REPLACE FUNCTION public.get_owner_member_rows()
+RETURNS SETOF public.group_members
+LANGUAGE sql
+SECURITY DEFINER
+AS $$
+  SELECT gm.*
+  FROM public.group_members gm
+  WHERE EXISTS (
+    SELECT 1 FROM public.groups g
+    WHERE g.id = gm.group_id AND g.created_by = auth.uid()
+  );
+$$;
 
 -- Ensure the invite RPC function exists with correct logic
 CREATE OR REPLACE FUNCTION invite_user_to_group(
@@ -234,13 +228,12 @@ BEGIN
   -- Check if user is already a member
   IF EXISTS(
     SELECT 1 FROM group_members gm
-    JOIN profiles p ON p.id = gm.user_id
+    JOIN auth.users u ON u.id = gm.user_id
     WHERE gm.group_id = p_group_id
-    AND LOWER(p.email) = LOWER(p_invitee_email)
+    AND LOWER(u.email) = LOWER(p_invitee_email)
   ) THEN
     RAISE EXCEPTION 'User is already a member of this group';
   END IF;
-
   -- Generate secure token
   v_token := encode(gen_random_bytes(32), 'hex');
 

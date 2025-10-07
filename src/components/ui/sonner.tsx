@@ -1,6 +1,6 @@
 "use client";
 
-import { Toaster as SonnerToaster } from 'sonner';
+import * as Sonner from 'sonner';
 
 /**
  * Custom Toaster component that wraps the Sonner toaster
@@ -12,6 +12,8 @@ interface CustomToasterProps {
 }
 
 const AppToaster = ({ richColors = true, ...props }: CustomToasterProps) => {
+  const SonnerToaster = (Sonner as any).Toaster as React.ComponentType<any> | undefined;
+  if (!SonnerToaster) return null;
   return (
     <SonnerToaster
       richColors={richColors}

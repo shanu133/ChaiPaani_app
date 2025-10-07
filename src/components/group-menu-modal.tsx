@@ -1,14 +1,11 @@
 import React, { useState } from 'react';
+import * as Sonner from 'sonner';
 import { Button } from './ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
-import { Label } from './ui/label';
-import { Input } from './ui/input';
-import { Textarea } from './ui/textarea';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
-import { AlertCircle, Calendar, ChevronDown, Clock, DollarSign, Edit, Eye, Menu, MoreHorizontal, Trash2, Users } from 'lucide-react';
+import { AlertCircle, Edit, Trash2, Users } from 'lucide-react';
 import { groupService } from '../lib/supabase-service';
-import { CreateGroupModal } from './create-group-modal';
 import { AddMembersModal } from './add-members-modal';
 
 interface GroupMenuModalProps {
@@ -19,6 +16,8 @@ interface GroupMenuModalProps {
   onGroupUpdate?: () => void;
   onGroupLeave?: () => void;
   onGroupDelete?: () => void;
+  // Optional callback to open the edit group modal in the parent
+  openEditGroupModal?: (group: { id: string; name: string }) => void;
 }
 
 export const GroupMenuModal: React.FC<GroupMenuModalProps> = ({
@@ -29,25 +28,57 @@ export const GroupMenuModal: React.FC<GroupMenuModalProps> = ({
   onGroupUpdate,
   onGroupLeave,
   onGroupDelete,
+  openEditGroupModal,
 }) => {
   const [showAddMembers, setShowAddMembers] = useState(false);
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  // NOTE: Wire this up to a member selector UI elsewhere in this modal
+  const [selectedMemberId] = useState<string | null>(null);
+  const notify = {
+    success: (msg: string) => (Sonner as any)?.toast?.success ? (Sonner as any).toast.success(msg) : (Sonner as any)?.toast ? (Sonner as any).toast(msg) : console.info(msg),
+    error: (msg: string) => (Sonner as any)?.toast?.error ? (Sonner as any).toast.error(msg) : (Sonner as any)?.toast ? (Sonner as any).toast(msg) : console.error(msg),
+  };
   const handleAddMember = () => {
     setShowAddMembers(true);
   };
 
   const handleEditGroup = () => {
-    // TODO: Open edit group modal
-    console.log('Edit group functionality coming soon');
-    onClose();
+    // Trigger parent-provided edit modal with current group payload
+    if (openEditGroupModal) {
+      openEditGroupModal({ id: groupId, name: groupName });
+      // Close this menu only after successfully triggering the edit modal
+      onClose();
+      return;
+    }
+
+    // If no callback provided, inform developer
+    console.warn('openEditGroupModal prop not provided to GroupMenuModal.');
   };
 
   const handleTransferOwnership = async () => {
+    // Validate selection
+    if (!selectedMemberId) {
+      notify.error('Please select a member to transfer ownership to.');
+      return;
+    }
+
+    const confirmed = confirm('Are you sure you want to transfer ownership of this group? You will lose owner permissions.');
+    if (!confirmed) return;
+
+    setIsTransferring(true);
     try {
-      // TODO: Implement transfer ownership functionality
-      console.log('Transfer ownership functionality coming soon');
-    } catch (error) {
-      console.error('Error transferring ownership:', error);
-      console.error('Failed to transfer ownership');
+      const { error } = await groupService.transferOwnership(groupId, selectedMemberId);
+      if (error) throw error;
+
+      notify.success('Ownership transferred successfully.');
+      onGroupUpdate?.();
+      onClose();
+    } catch (error: any) {
+      const message = error?.message || 'Failed to transfer ownership. Please try again.';
+      notify.error(message);
+    } finally {
+      setIsTransferring(false);
     }
   };
 
@@ -69,19 +100,16 @@ export const GroupMenuModal: React.FC<GroupMenuModalProps> = ({
   };
 
   const handleLeaveGroup = async () => {
-    if (!confirm(`Are you sure you want to leave "${groupName}"?`)) {
-      return;
-    }
-
     try {
       const { error } = await groupService.leaveGroup(groupId);
       if (error) throw error;
 
-      console.log(`Left group "${groupName}" successfully`);
+      notify.success(`Left group "${groupName}" successfully`);
+      setShowLeaveConfirm(false);
       onGroupLeave?.();
     } catch (error: any) {
-      console.error('Error leaving group:', error);
-      console.error(error.message || 'Failed to leave group');
+      const message = error?.message || 'Failed to leave group';
+      notify.error(message);
     }
   };
 
@@ -127,9 +155,9 @@ export const GroupMenuModal: React.FC<GroupMenuModalProps> = ({
                     <Edit className="mr-2 h-4 w-4" />
                     Edit Group
                   </Button>
-                  <Button variant="ghost" className="justify-start" onClick={handleTransferOwnership}>
+                  <Button variant="ghost" className="justify-start" onClick={handleTransferOwnership} disabled={isTransferring}>
                     <Edit className="mr-2 h-4 w-4" />
-                    Transfer Ownership
+                    {isTransferring ? 'Transferring…' : 'Transfer Ownership'}
                   </Button>
                 </>
               )}
@@ -138,7 +166,7 @@ export const GroupMenuModal: React.FC<GroupMenuModalProps> = ({
             {/* Group Actions */}
             <div className="grid gap-2 pt-2">
               {!isOwner ? (
-                <Button variant="ghost" className="justify-start text-destructive" onClick={handleLeaveGroup}>
+                <Button variant="ghost" className="justify-start text-destructive" onClick={() => setShowLeaveConfirm(true)}>
                   <Trash2 className="mr-2 h-4 w-4" />
                   Leave Group
                 </Button>
@@ -153,6 +181,26 @@ export const GroupMenuModal: React.FC<GroupMenuModalProps> = ({
         </DialogContent>
       </Dialog>
 
+      {/* Leave Group Confirmation */}
+      <Dialog open={showLeaveConfirm} onOpenChange={setShowLeaveConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Leave Group</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to leave "{groupName}"? You will no longer have access to this group's expenses.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => setShowLeaveConfirm(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleLeaveGroup}>
+              Leave Group
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Sub-modals */}
       <AddMembersModal
         isOpen={showAddMembers}
@@ -162,7 +210,7 @@ export const GroupMenuModal: React.FC<GroupMenuModalProps> = ({
           name: groupName
         }}
         onMembersAdded={() => {
-          setShowAddMembers(false);
+          // Keep the modal open so the shareable invite link remains visible
           onGroupUpdate?.(); // Refresh the group data
         }}
       />
