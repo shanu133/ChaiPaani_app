@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";  const [currentUser, setCurrentUser] = useState<{ id: string; email?: string } | null>(null);import { Button } from "./ui/button";
+import { useState, useEffect, useCallback } from "react";
+import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
