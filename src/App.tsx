@@ -1,4 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from "react";
+import { envDiagnostics } from "./lib/supabase";
 const LandingPage = lazy(() => import("./components/landing-page").then(m => ({ default: m.LandingPage })));
 const AuthPage = lazy(() => import("./components/auth-page").then(m => ({ default: m.AuthPage })));
 const Dashboard = lazy(() => import("./components/dashboard").then(m => ({ default: m.Dashboard })));
@@ -160,9 +161,17 @@ export default function App() {
     );
   }
 
+  // Minimal diagnostics banner if env is missing (dev/preview only effect)
+  const showEnvBanner = envDiagnostics.missing.length > 0 && (import.meta as any).env?.DEV;
+
   // Render the appropriate view
   return (
     <>
+      {showEnvBanner && (
+        <div className="w-full bg-yellow-100 text-yellow-900 text-sm px-4 py-2">
+          Missing env: {envDiagnostics.missing.join(', ')}. Backend features will be disabled until configured.
+        </div>
+      )}
       {(() => {
         switch (currentView) {
           case "auth":

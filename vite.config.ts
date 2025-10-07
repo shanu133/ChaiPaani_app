@@ -18,6 +18,6 @@ export default defineConfig({
     open: true, // open browser automatically
   },
   build: {
-    outDir: 'build',
+    outDir: 'dist',
   },
 });

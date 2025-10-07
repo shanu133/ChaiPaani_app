@@ -3,16 +3,29 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  const missing = [
+// Soft-fail diagnostics to avoid white screen on fresh imports/deploys.
+export const envDiagnostics = {
+  missing: [
     !supabaseUrl ? 'VITE_SUPABASE_URL' : null,
     !supabaseAnonKey ? 'VITE_SUPABASE_ANON_KEY' : null,
-  ].filter(Boolean).join(', ')
-  throw new Error(`Missing required environment variable(s): ${missing}.\n` +
-    `Ensure these are defined in your Vite environment (e.g., .env.local) before running the app.`)
+  ].filter(Boolean) as string[]
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+if (envDiagnostics.missing.length > 0) {
+  // Do not throw at import-time; log a clear diagnostic instead.
+  // Calls will fail fast until env is set, but the app can render and guide the user.
+  // Provide an obviously-invalid URL to avoid accidental requests to a real host.
+  // eslint-disable-next-line no-console
+  console.error(
+    `Supabase env missing: ${envDiagnostics.missing.join(', ')}. ` +
+    `Set these in your environment (e.g., .env.local, Vercel project env) before using backend features.`
+  )
+}
+
+const resolvedUrl = supabaseUrl || 'https://env-missing.invalid'
+const resolvedAnonKey = supabaseAnonKey || 'env-missing-anon-key'
+
+export const supabase = createClient(resolvedUrl, resolvedAnonKey)
 
 // Type definitions
 export interface Database {
