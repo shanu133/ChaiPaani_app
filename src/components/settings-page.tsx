@@ -1,8 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Separator } from "./ui/separator";
@@ -10,26 +9,19 @@ import { Switch } from "./ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
-import ChaiPaaniLogo from "figma:asset/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
-import ChaiPaaniLogoFull from "figma:asset/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
-import { toast } from "sonner@2.0.3";
+import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
+import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
+import { toast } from "sonner";
+import { profileService, authService } from "../lib/supabase-service";
 import { 
   ArrowLeft,
   User,
   Bell,
   Shield,
   Palette,
-  Moon,
-  Sun,
-  Globe,
-  Smartphone,
-  Mail,
-  Lock,
   Trash2,
   Download,
   Upload,
-  CreditCard,
-  Settings,
   LogOut,
   Camera,
   Edit,
@@ -47,14 +39,50 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
   const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'privacy' | 'appearance' | 'data'>('profile');
   const [isEditing, setIsEditing] = useState(false);
   
-  // Profile settings
+  // Profile settings (loaded from Supabase)
   const [profile, setProfile] = useState({
-    name: 'Rahul Sharma',
-    email: 'rahul.sharma@example.com',
-    phone: '+91 98765 43210',
+    name: '',
+    email: '',
+    phone: '',
     defaultCurrency: 'INR',
     language: 'English'
   });
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        setLoadingProfile(true);
+        setProfileError(null);
+
+        // fetch profile from supabase
+        const { data, error } = await profileService.getCurrentProfile();
+        if (error) {
+          setProfileError(error.message || "Failed to load profile");
+          return;
+        }
+
+        // fallback to auth user email if display_name/full_name missing
+        const user = await authService.getCurrentUser();
+
+        setProfile({
+          name: (data?.display_name || data?.full_name || user?.email || "User") as string,
+          email: (data?.email || user?.email || "") as string,
+          phone: "",
+          defaultCurrency: "INR",
+          language: "English",
+        });
+      } catch (e: any) {
+        setProfileError(e?.message || "Failed to load profile");
+      } finally {
+        setLoadingProfile(false);
+      }
+    };
+
+    loadProfile();
+  }, []);
   
   // Notification settings
   const [notifications, setNotifications] = useState({
@@ -85,11 +113,31 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
     showAvatars: true
   });
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
+  try {
+    setSavingProfile(true);
+
+    const displayName = profile.name?.trim();
+    if (!displayName) {
+      toast.error("Name cannot be empty");
+      return;
+    }
+
+    const { error } = await profileService.updateDisplayName(displayName);
+
+    if (error) {
+      toast.error(error.message || "Failed to update profile");
+      return;
+    }
+
     setIsEditing(false);
     toast.success("Profile updated successfully!");
-  };
-
+  } catch (e: any) {
+    toast.error(e?.message || "Failed to update profile");
+  } finally {
+    setSavingProfile(false);
+  }
+};
   const handleDeleteAccount = () => {
     toast.error("Account deletion requested. Please contact support.");
   };
@@ -199,6 +247,7 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                     variant={isEditing ? "outline" : "ghost"}
                     size="sm"
                     onClick={() => isEditing ? handleSaveProfile() : setIsEditing(true)}
+                    disabled={savingProfile}
                   >
                     {isEditing ? (
                       <>
@@ -217,22 +266,37 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
               <CardContent className="space-y-6">
                 {/* Avatar */}
                 <div className="flex items-center gap-4">
-                  <Avatar className="w-20 h-20">
-                    <AvatarFallback className="text-2xl bg-primary text-primary-foreground">
-                      {profile.name.split(' ').map(n => n[0]).join('')}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="space-y-2">
-                    <h3 className="font-medium">{profile.name}</h3>
-                    <Button variant="outline" size="sm" disabled={!isEditing} onClick={handleChangePhoto}>
-                      <Camera className="w-4 h-4 mr-2" />
-                      Change Photo
-                    </Button>
-                  </div>
+                  {loadingProfile ? (
+                    <div className="h-20 w-full animate-pulse rounded-md bg-muted" />
+                  ) : (
+                    <>
+                      <Avatar className="w-20 h-20">
+                        <AvatarFallback className="text-2xl bg-primary text-primary-foreground">
+                          {profile.name ? profile.name.split(' ').map(n => n[0]).join('') : 'U'}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="space-y-2">
+                        <h3 className="font-medium">{profile.name || 'User'}</h3>
+                        <Button variant="outline" size="sm" disabled={!isEditing} onClick={handleChangePhoto}>
+                          <Camera className="w-4 h-4 mr-2" />
+                          Change Photo
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </div>
-                
+
+                {profileError && (
+                  <>
+                    <Separator />
+                    <div className="text-sm text-red-600">
+                      {profileError}
+                    </div>
+                  </>
+                )}
+
                 <Separator />
-                
+
                 {/* Profile Fields */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -241,10 +305,10 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                       id="name"
                       value={profile.name}
                       onChange={(e) => setProfile(prev => ({ ...prev, name: e.target.value }))}
-                      disabled={!isEditing}
+                      disabled={!isEditing || loadingProfile}
                     />
                   </div>
-                  
+
                   <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
                     <Input
@@ -252,10 +316,10 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                       type="email"
                       value={profile.email}
                       onChange={(e) => setProfile(prev => ({ ...prev, email: e.target.value }))}
-                      disabled={!isEditing}
+                      disabled
                     />
                   </div>
-                  
+
                   <div className="space-y-2">
                     <Label htmlFor="phone">Phone Number</Label>
                     <Input
@@ -265,11 +329,11 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                       disabled={!isEditing}
                     />
                   </div>
-                  
+
                   <div className="space-y-2">
                     <Label htmlFor="currency">Default Currency</Label>
-                    <Select 
-                      value={profile.defaultCurrency} 
+                    <Select
+                      value={profile.defaultCurrency}
                       onValueChange={(value) => setProfile(prev => ({ ...prev, defaultCurrency: value }))}
                       disabled={!isEditing}
                     >
@@ -284,11 +348,11 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                       </SelectContent>
                     </Select>
                   </div>
-                  
+
                   <div className="space-y-2">
                     <Label htmlFor="language">Language</Label>
-                    <Select 
-                      value={profile.language} 
+                    <Select
+                      value={profile.language}
                       onValueChange={(value) => setProfile(prev => ({ ...prev, language: value }))}
                       disabled={!isEditing}
                     >
@@ -307,11 +371,11 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                 
                 {isEditing && (
                   <div className="flex gap-2 pt-4">
-                    <Button onClick={handleSaveProfile}>
+                    <Button onClick={handleSaveProfile} disabled={savingProfile}>
                       <Save className="w-4 h-4 mr-2" />
-                      Save Changes
+                      {savingProfile ? 'Saving...' : 'Save Changes'}
                     </Button>
-                    <Button variant="outline" onClick={() => setIsEditing(false)}>
+                    <Button variant="outline" onClick={() => setIsEditing(false)} disabled={savingProfile}>
                       <X className="w-4 h-4 mr-2" />
                       Cancel
                     </Button>
@@ -588,7 +652,7 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                       <p className="font-medium">Import Data</p>
                       <p className="text-sm text-muted-foreground">Import data from other expense tracking apps</p>
                     </div>
-                    <Button variant="outline">
+                    <Button variant="outline" onClick={handleImportData}>
                       <Upload className="w-4 h-4 mr-2" />
                       Import
                     </Button>

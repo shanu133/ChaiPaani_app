@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -7,8 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
-import { IndianRupee, ArrowRight, CheckCircle, Users } from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import { IndianRupee, ArrowRight, CheckCircle } from "lucide-react";
+import { toast } from "sonner";
+import { expenseService, authService } from "../lib/supabase-service";
 
 interface SettleUpModalProps {
   isOpen: boolean;
@@ -36,16 +37,60 @@ export function SettleUpModal({ isOpen, onClose, group, onSettleUp }: SettleUpMo
   const [selectedReceiver, setSelectedReceiver] = useState("");
   const [amount, setAmount] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [memberBalances, setMemberBalances] = useState<Record<string, number>>({});
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
-  // Mock balances for demonstration
-  const memberBalances = {
-    "user1": 250,    // You owe 250
-    "user2": -180,   // Arjun is owed 180
-    "user3": 75,     // Priya owes 75
-    "user4": -145    // Rahul is owed 145
+  // Stable callbacks for effects
+  const fetchCurrentUser = useCallback(async () => {
+    try {
+      const user = await authService.getCurrentUser();
+      setCurrentUser(user);
+    } catch (error) {
+      console.error("Error fetching current user:", error);
+    }
+  }, []);
+
+  const fetchMemberBalances = useCallback(async () => {
+    if (!group?.id) return;
+
+  // Optionally show a loading indicator for balances here if desired
+    try {
+      console.log(`Fetching balances for group ${group.id}`);
+      const { data, error } = await expenseService.getUserBalance(group.id);
+      if (error) {
+        console.error("Error fetching balances:", error);
+        toast.error("Failed to load balances");
+        return;
+      }
+
+      if (data) {
+        // Transform balance data into memberBalances format
+        const balances: Record<string, number> = {};
+        data.forEach((balance: any) => {
+          balances[balance.user_id] = balance.net_balance || 0;
+        });
+        setMemberBalances(balances);
+        console.log("Loaded member balances:", balances);
+      }
+    } catch (error) {
+      console.error("Error fetching member balances:", error);
+      toast.error("Failed to load balances");
+    } finally {
+      // Done loading balances
+    }
+  }, [group?.id]);
+
+  // Fetch current user and balances when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchCurrentUser();
+      fetchMemberBalances();
+    }
+  }, [isOpen, fetchCurrentUser, fetchMemberBalances]);
+
+  const getCurrentUserBalance = () => {
+    return currentUser ? memberBalances[currentUser.id] || 0 : 0;
   };
-
-  const getCurrentUserBalance = () => memberBalances["user1"] || 0;
   
   const getOptimalSettlements = () => {
     // Simplified settlement calculation
@@ -94,6 +139,13 @@ export function SettleUpModal({ isOpen, onClose, group, onSettleUp }: SettleUpMo
   };
 
   const handleSettleUp = async () => {
+    console.log("handleSettleUp called with:", {
+      selectedPayer,
+      selectedReceiver,
+      amount,
+      groupId: group?.id
+    });
+
     if (!selectedPayer || !selectedReceiver) {
       toast.error("Please select both payer and receiver");
       return;
@@ -118,8 +170,27 @@ export function SettleUpModal({ isOpen, onClose, group, onSettleUp }: SettleUpMo
     setIsLoading(true);
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log("Recording real settlement:", {
+        from: selectedPayer,
+        to: selectedReceiver,
+        amount: settlementAmount,
+        groupId: group?.id
+      });
+
+      const { data, error } = await expenseService.settleUp(
+        selectedPayer,
+        selectedReceiver,
+        settlementAmount,
+        group?.id || ""
+      );
+
+      if (error) {
+        console.error("Error recording settlement:", error);
+        toast.error(error.message || "Failed to record settlement");
+        return;
+      }
+
+      console.log("Settlement recorded successfully:", data);
 
       const settlementData = {
         id: Date.now().toString(),
@@ -129,22 +200,28 @@ export function SettleUpModal({ isOpen, onClose, group, onSettleUp }: SettleUpMo
         to: selectedReceiver,
         amount: settlementAmount,
         timestamp: new Date().toISOString(),
-        status: 'completed'
+        status: 'completed',
+        settledSplits: data?.settled_splits || []
       };
 
       onSettleUp(settlementData);
-      
+
+      // Refresh balances after settlement
+      if (group?.id) {
+        await fetchMemberBalances();
+      }
       const payerName = getMemberName(selectedPayer);
       const receiverName = getMemberName(selectedReceiver);
-      
+
       toast.success(`Settlement of ₹${settlementAmount} from ${payerName} to ${receiverName} recorded successfully!`);
-      
+
       // Reset form
       setSelectedPayer("");
       setSelectedReceiver("");
       setAmount("");
       onClose();
     } catch (error) {
+      console.error("Error in handleSettleUp:", error);
       toast.error("Failed to record settlement. Please try again.");
     } finally {
       setIsLoading(false);

@@ -22,11 +22,17 @@ reviews:
   tools:
     languagetool:
       enabled: false
+    github-checks:
+      enabled: true
 chat:
   auto_reply: true
-github_checks:
-  annotations: true
-  labels: true
 tracking:
-  issues: true
-  prs: true
+# If desired, make intent explicit with supported keys (defaults are already true):
+# reviews:
+#   related_issues: true
+#   related_prs: true
+# knowledge_base:
+#   issues:
+#     scope: auto
+#   pull_requests:
+#     scope: auto

@@ -1,3 +1,4 @@
+# File: .github/workflows/coderabbit.yml
 name: CodeRabbit
 
 on:
@@ -9,12 +10,25 @@ on:
 jobs:
   coderabbit:
     if: >
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@coderabbitai'))
+      (github.event_name == 'pull_request'
+        && github.event.pull_request.draft == false
+        && !github.event.pull_request.head.repo.fork) ||
+      (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request != null
+        && contains(github.event.comment.body, '@coderabbitai')
+        && (github.event.comment.author_association == 'MEMBER'
+          || github.event.comment.author_association == 'OWNER'
+          || github.event.comment.author_association == 'COLLABORATOR'))
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
       - name: CodeRabbit
-        uses: coderabbitai/ai-pr-reviewer@latest
+        # Pin to a commit SHA for security and reproducibility
+        uses: coderabbitai/ai-pr-reviewer@v1
+        # For maximum security, replace with: coderabbitai/ai-pr-reviewer@<commit-sha>
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

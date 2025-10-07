@@ -1,40 +1,66 @@
-import { useState, useEffect } from "react";
-import { LandingPage } from "./components/landing-page";
-import { AuthPage } from "./components/auth-page";
-import { Dashboard } from "./components/dashboard";
-import { GroupsPage } from "./components/groups-page";
-import { NotificationsPage } from "./components/notifications-page";
-import { ActivityPage } from "./components/activity-page";
-import { SettingsPage } from "./components/settings-page";
-import { authService } from "./lib/supabase-service";
+import { useState, useEffect, lazy, Suspense } from "react";
+import { envDiagnostics } from "./lib/supabase";
+const LandingPage = lazy(() => import("./components/landing-page").then(m => ({ default: m.LandingPage })));
+const AuthPage = lazy(() => import("./components/auth-page").then(m => ({ default: m.AuthPage })));
+const Dashboard = lazy(() => import("./components/dashboard").then(m => ({ default: m.Dashboard })));
+const GroupsPage = lazy(() => import("./components/groups-page").then(m => ({ default: m.GroupsPage })));
+const GroupPage = lazy(() => import("./components/group-page").then(m => ({ default: m.GroupPage })));
+const NotificationsPage = lazy(() => import("./components/notifications-page").then(m => ({ default: m.NotificationsPage })));
+const ActivityPage = lazy(() => import("./components/activity-page").then(m => ({ default: m.ActivityPage })));
+const SettingsPage = lazy(() => import("./components/settings-page").then(m => ({ default: m.SettingsPage })));
+import { Toaster } from "./components/ui/sonner";
+import * as Sonner from "sonner";
+import { authService, invitationService } from "./lib/supabase-service";
 
-type AppView = "landing" | "auth" | "dashboard" | "groups" | "notifications" | "activity" | "settings";
+type AppView = "landing" | "auth" | "dashboard" | "groups" | "group" | "notifications" | "activity" | "settings";
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>("landing");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
+  const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(null);
 
   // Check for existing authentication on app load
   useEffect(() => {
     const checkAuth = async () => {
       try {
+        // Capture invite token from URL on first load
+        const url = new URL(window.location.href);
+        const tokenFromUrl = url.searchParams.get("token");
+        if (tokenFromUrl) {
+          // Persist token until we complete acceptance after login
+          sessionStorage.setItem("invite_token", tokenFromUrl);
+          setPendingInviteToken(tokenFromUrl);
+          // Clean the URL so token isn't kept in history
+          url.searchParams.delete("token");
+          window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+        } else {
+          const saved = sessionStorage.getItem("invite_token");
+          if (saved) setPendingInviteToken(saved);
+        }
+
         const user = await authService.getCurrentUser();
         if (user) {
           setIsAuthenticated(true);
           setCurrentView("dashboard");
+        } else {
+          setIsAuthenticated(false);
+          setCurrentView("landing");
         }
       } catch (error) {
         console.error("Auth check failed:", error);
+        setIsAuthenticated(false);
+        setCurrentView("landing");
       } finally {
-        setLoading(false);
+        setIsLoading(false);
       }
     };
 
     checkAuth();
 
     // Listen for auth state changes
-    const { data: authListener } = authService.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = authService.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setIsAuthenticated(true);
         setCurrentView("dashboard");
@@ -44,30 +70,46 @@ export default function App() {
       }
     });
 
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
+  // When authenticated and we have a pending invite token, accept it once
+  useEffect(() => {
+    const acceptIfPending = async () => {
+      if (!isAuthenticated) return;
+      const token = pendingInviteToken || sessionStorage.getItem("invite_token");
+      if (!token) return;
+      try {
+        const { error } = await invitationService.acceptByToken(token);
+        if (error) {
+          console.error("Failed to accept invite token:", error);
+          (Sonner as any)?.toast?.error?.((error as any)?.message || "Failed to join group from invitation");
+        } else {
+          (Sonner as any)?.toast?.success?.("Joined group successfully");
+        }
+      } catch (e) {
+  console.error("Error accepting invite token:", e);
+  (Sonner as any)?.toast?.error?.("Unable to accept invitation");
+      } finally {
+        sessionStorage.removeItem("invite_token");
+        setPendingInviteToken(null);
+      }
+    };
+    acceptIfPending();
+  }, [isAuthenticated, pendingInviteToken]);
   const handleGetStarted = () => {
     setCurrentView("auth");
   };
 
   const handleLogin = () => {
-    // Authentication is now handled by Supabase auth state listener
-    // This function is kept for compatibility with existing components
-    setIsAuthenticated(true);
-    setCurrentView("dashboard");
+    // Auth is now handled by Supabase, this is just for navigation
+    setCurrentView("auth");
   };
 
   const handleLogout = async () => {
-    try {
-      await authService.signOut();
-      setIsAuthenticated(false);
-      setCurrentView("landing");
-    } catch (error) {
-      console.error("Logout failed:", error);
-    }
+    await authService.signOut();
+    setIsAuthenticated(false);
+    setCurrentView("landing");
   };
 
   const handleBackToLanding = () => {
@@ -102,80 +144,136 @@ export default function App() {
     setCurrentView("settings");
   };
 
-  // Show loading spinner while checking authentication
-  if (loading) {
+  const handleGoToGroup = (groupId: string) => {
+    setCurrentGroupId(groupId);
+    setCurrentView("group");
+  };
+
+  // Show loading while checking auth
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading ChaiPaani...</p>
+          <p className="text-muted-foreground">Loading...</p>
         </div>
       </div>
     );
   }
 
+  // Minimal diagnostics banner if env is missing (dev/preview only effect)
+  const showEnvBanner = envDiagnostics.missing.length > 0 && (import.meta as any).env?.DEV;
+
   // Render the appropriate view
-  switch (currentView) {
-    case "auth":
-      return (
-        <AuthPage 
-          onLogin={handleLogin}
-          onBack={handleBackToLanding}
-          onLogoClick={handleLogoClick}
-        />
-      );
-    
-    case "dashboard":
-      return (
-        <Dashboard 
-          onLogout={handleLogout}
-          onGoToGroups={handleGoToGroups}
-          onGoToNotifications={handleGoToNotifications}
-          onGoToActivity={handleGoToActivity}
-          onGoToSettings={handleGoToSettings}
-          onLogoClick={handleLogoClick}
-        />
-      );
-    
-    case "groups":
-      return (
-        <GroupsPage 
-          onLogout={handleLogout}
-          onBack={handleBackToDashboard}
-          onLogoClick={handleLogoClick}
-        />
-      );
-    
-    case "notifications":
-      return (
-        <NotificationsPage 
-          onBack={handleBackToDashboard}
-          onLogoClick={handleLogoClick}
-        />
-      );
-    
-    case "activity":
-      return (
-        <ActivityPage 
-          onBack={handleBackToDashboard}
-          onLogoClick={handleLogoClick}
-        />
-      );
-    
-    case "settings":
-      return (
-        <SettingsPage 
-          onBack={handleBackToDashboard}
-          onLogout={handleLogout}
-          onLogoClick={handleLogoClick}
-        />
-      );
-    
-    default:
-      return (
-        <LandingPage 
-          onGetStarted={handleGetStarted}
-        />
-      );
-  }
+  return (
+    <>
+      {showEnvBanner && (
+        <div className="w-full bg-yellow-100 text-yellow-900 text-sm px-4 py-2">
+          Missing env: {envDiagnostics.missing.join(', ')}. Backend features will be disabled until configured.
+        </div>
+      )}
+      {(() => {
+        switch (currentView) {
+          case "auth":
+            return (
+              <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div><p className="text-muted-foreground">Loading…</p></div></div>}>
+                <AuthPage
+                onLogin={handleLogin}
+                onBack={handleBackToLanding}
+                onLogoClick={handleLogoClick}
+                />
+              </Suspense>
+            );
+
+          case "dashboard":
+            return (
+              <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div><p className="text-muted-foreground">Loading…</p></div></div>}>
+                <Dashboard
+                onLogout={handleLogout}
+                onGoToGroups={handleGoToGroups}
+                onGoToNotifications={handleGoToNotifications}
+                onGoToActivity={handleGoToActivity}
+                onGoToSettings={handleGoToSettings}
+                onLogoClick={handleLogoClick}
+                />
+              </Suspense>
+            );
+
+          case "groups":
+            return (
+              <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div><p className="text-muted-foreground">Loading…</p></div></div>}>
+                <GroupsPage
+                onLogout={handleLogout}
+                onBack={handleBackToDashboard}
+                onLogoClick={handleLogoClick}
+                onGoToGroup={handleGoToGroup}
+                />
+              </Suspense>
+            );
+
+          case "group":
+            return currentGroupId ? (
+              <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div><p className="text-muted-foreground">Loading…</p></div></div>}>
+                <GroupPage
+                groupId={currentGroupId}
+                onBack={handleBackToDashboard}
+                onLogout={handleLogout}
+                onLogoClick={handleLogoClick}
+                />
+              </Suspense>
+            ) : (
+              <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div><p className="text-muted-foreground">Loading…</p></div></div>}>
+                <GroupsPage
+                onLogout={handleLogout}
+                onBack={handleBackToDashboard}
+                onLogoClick={handleLogoClick}
+                onGoToGroup={handleGoToGroup}
+                />
+              </Suspense>
+            );
+
+          case "notifications":
+            return (
+              <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div><p className="text-muted-foreground">Loading…</p></div></div>}>
+                <NotificationsPage
+                onBack={handleBackToDashboard}
+                onLogoClick={handleLogoClick}
+                />
+              </Suspense>
+            );
+
+          case "activity":
+            return (
+              <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div><p className="text-muted-foreground">Loading…</p></div></div>}>
+                <ActivityPage
+                onBack={handleBackToDashboard}
+                onLogoClick={handleLogoClick}
+                />
+              </Suspense>
+            );
+
+          case "settings":
+            return (
+              <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div><p className="text-muted-foreground">Loading…</p></div></div>}>
+                <SettingsPage
+                onBack={handleBackToDashboard}
+                onLogout={handleLogout}
+                onLogoClick={handleLogoClick}
+                />
+              </Suspense>
+            );
+
+          default:
+            return (
+              <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div><p className="text-muted-foreground">Loading…</p></div></div>}>
+                <LandingPage
+                onGetStarted={handleGetStarted}
+                />
+              </Suspense>
+            );
+        }
+      })()}
+      <Toaster />
+    </>
+  );
 }

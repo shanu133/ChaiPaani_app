@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -8,15 +8,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Textarea } from "./ui/textarea";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Badge } from "./ui/badge";
-import { 
-  X, 
-  IndianRupee, 
-  Receipt, 
+import {
+  X,
+  IndianRupee,
+  Receipt,
   Upload,
   Users,
   Calculator,
-  Camera
+  Camera,
+  Loader2
 } from "lucide-react";
+import { expenseService } from "../lib/supabase-service";
+import * as Sonner from "sonner";
+
+// Shared floating-point comparison tolerance for split validation
+const FLOAT_TOLERANCE = 0.01;
 
 interface GroupMember {
   id: string;
@@ -29,19 +35,66 @@ interface AddExpenseModalProps {
   onClose: () => void;
   groupMembers: GroupMember[];
   currentUser: GroupMember;
+  groupId: string;
+  onExpenseCreated?: () => void;
 }
 
-export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser }: AddExpenseModalProps) {
+export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser, groupId, onExpenseCreated }: AddExpenseModalProps) {
   const [formData, setFormData] = useState({
     description: "",
     amount: "",
     category: "",
     notes: "",
-    payerId: currentUser.id,
+    payerId: currentUser?.id || "",
     splitMethod: "equally" as "equally" | "custom",
-    selectedMembers: new Set([currentUser.id]),
+    selectedMembers: new Set(currentUser?.id ? [currentUser.id] : []),
     customAmounts: {} as Record<string, string>
   });
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const notify = {
+    error: (msg: string) => (Sonner as any)?.toast?.error ? (Sonner as any).toast.error(msg) : (Sonner as any)?.toast ? (Sonner as any).toast(msg) : console.error(msg),
+    success: (msg: string) => (Sonner as any)?.toast?.success ? (Sonner as any).toast.success(msg) : (Sonner as any)?.toast ? (Sonner as any).toast(msg) : console.info(msg),
+  };
+
+  const getErrorMessage = (err: unknown): string => {
+    if (typeof err === 'string') return err;
+    if (err && typeof err === 'object') {
+      const anyErr = err as any;
+      return anyErr?.response?.data?.message || anyErr?.message || 'Could not create expense — please try again';
+    }
+    return 'Could not create expense — please try again';
+  };
+
+  const handleClose = () => {
+    setSubmitError(null);
+    onClose();
+  };
+
+  // Update form data when currentUser or groupMembers change
+  useEffect(() => {
+    if (currentUser?.id && groupMembers.length > 0) {
+      // Find the first member that's not the current user
+      const otherMember = groupMembers.find(member => member.id !== currentUser.id);
+
+      if (otherMember) {
+        setFormData(prev => ({
+          ...prev,
+          payerId: currentUser.id,
+          selectedMembers: new Set([currentUser.id, otherMember.id])
+        }));
+      } else {
+        // Fallback if no other member exists
+        setFormData(prev => ({
+          ...prev,
+          payerId: currentUser.id,
+          selectedMembers: new Set([currentUser.id])
+        }));
+      }
+    }
+  }, [currentUser?.id, groupMembers]);
 
   const categories = [
     { value: "food", label: "🍽️ Food & Dining", color: "bg-orange-100 text-orange-800" },
@@ -54,70 +107,114 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser }: 
   ];
 
   const handleMemberToggle = (memberId: string) => {
-    const newSelected = new Set(formData.selectedMembers);
-    if (newSelected.has(memberId)) {
-      newSelected.delete(memberId);
-    } else {
-      newSelected.add(memberId);
+    // For 2-person groups, don't allow deselection of the required members
+    if (groupMembers.length <= 2) {
+      return; // keep both members selected
     }
-    setFormData({ ...formData, selectedMembers: newSelected });
+    setFormData(prev => {
+      const selected = new Set(prev.selectedMembers);
+      if (selected.has(memberId)) selected.delete(memberId); else selected.add(memberId);
+      return { ...prev, selectedMembers: selected };
+    });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    setSubmitError(null);
+
     // Validate form
     if (!formData.description.trim() || !formData.amount || formData.selectedMembers.size === 0) {
+      console.error("Please fill in all required fields");
+      setSubmitError("Please fill in all required fields");
+      return;
+    }
+
+    // Validate groupId is a UUID before calling API
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!groupId || !uuidRegex.test(groupId)) {
+      console.error("Invalid or missing group ID. Please select a valid group.");
+      return;
+    }
+
+    // Validate amount
+    const totalAmount = parseFloat(formData.amount);
+    if (isNaN(totalAmount) || totalAmount <= 0) {
+      console.error("Please enter a valid amount");
       return;
     }
 
     // Calculate splits
-    const totalAmount = parseFloat(formData.amount);
-    const selectedMembersList = Array.from(formData.selectedMembers);
-    
-    let splits: Record<string, number> = {};
-    
-    if (formData.splitMethod === "equally") {
+  const selectedMembersList = Array.from(formData.selectedMembers);
+  let splits: { user_id: string; amount: number }[] = [];
+    if (formData.splitMethod === 'equally') {
       const splitAmount = totalAmount / selectedMembersList.length;
-      selectedMembersList.forEach(memberId => {
-        splits[memberId] = splitAmount;
-      });
+      splits = selectedMembersList.map(memberId => ({ user_id: memberId, amount: splitAmount }));
     } else {
-      // Custom amounts logic would go here
-      splits = Object.fromEntries(
-        selectedMembersList.map(memberId => [
-          memberId, 
-          parseFloat(formData.customAmounts[memberId] || "0")
-        ])
-      );
+      // Custom amounts
+      let totalSplitAmount = 0;
+      splits = selectedMembersList.map(memberId => {
+        const amount = parseFloat(formData.customAmounts[memberId] || "0");
+        totalSplitAmount += amount;
+        return {
+          user_id: memberId,
+          amount: amount
+        };
+      });
+
+      // Validate custom splits add up to total
+      if (Math.abs(totalSplitAmount - totalAmount) > FLOAT_TOLERANCE) {
+        console.error("Custom split amounts must equal the total expense amount");
+        setSubmitError(`Custom split amounts (₹${totalSplitAmount.toFixed(2)}) must equal the total expense amount (₹${totalAmount.toFixed(2)})`);
+        return;
+      }
     }
 
-    // Create expense object
-    const expense = {
-      description: formData.description,
-      amount: totalAmount,
-      category: formData.category,
-      notes: formData.notes,
-      payerId: formData.payerId,
-      splits,
-      createdAt: new Date().toISOString()
-    };
+    setIsLoading(true);
 
-    console.log("Creating expense:", expense);
-    
-    // Reset form and close
-    setFormData({
-      description: "",
-      amount: "",
-      category: "",
-      notes: "",
-      payerId: currentUser.id,
-      splitMethod: "equally",
-      selectedMembers: new Set([currentUser.id]),
-      customAmounts: {}
-    });
-    
-    onClose();
+    try {
+      const { error } = await expenseService.createExpense(
+        groupId,
+        formData.description.trim(),
+        totalAmount,
+        formData.category || "general",
+        formData.notes.trim(),
+        splits
+      );
+
+      if (error) {
+        console.error("Error creating expense:", error);
+        const msg = (error as any)?.response?.data?.message || (error as any)?.message || "Could not create expense — please try again";
+        setSubmitError(msg);
+        notify.error(msg);
+        return;
+      }
+
+      console.log("Expense created successfully!");
+      notify.success("Expense created successfully");
+
+      // Reset form
+      setFormData({
+        description: "",
+        amount: "",
+        category: "",
+        notes: "",
+        payerId: currentUser?.id || "",
+        splitMethod: "equally",
+        selectedMembers: new Set(currentUser?.id ? [currentUser.id] : []),
+        customAmounts: {}
+      });
+
+      // Notify parent component
+      onExpenseCreated?.();
+      handleClose();
+    } catch (error) {
+      console.error("Unexpected error:", error);
+      const msg = getErrorMessage(error);
+      setSubmitError(msg);
+      notify.error(msg);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const selectedCategory = categories.find(cat => cat.value === formData.category);
@@ -138,12 +235,17 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser }: 
               Split a bill with your group members
             </p>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <Button variant="ghost" size="sm" onClick={handleClose}>
             <X className="w-5 h-5" />
           </Button>
         </CardHeader>
 
         <CardContent className="overflow-y-auto max-h-[70vh] space-y-6">
+          {submitError && (
+            <div className="p-3 border border-destructive/30 bg-destructive/10 text-destructive rounded-md text-sm">
+              {submitError}
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-6">
             
             {/* Basic Details */}
@@ -179,7 +281,7 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser }: 
 
                 <div className="space-y-2">
                   <Label htmlFor="category">Category</Label>
-                  <Select value={formData.category} onValueChange={(value) => setFormData({...formData, category: value})}>
+                  <Select value={formData.category} onValueChange={(value: string) => setFormData({...formData, category: value})}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
@@ -209,7 +311,7 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser }: 
             {/* Paid By */}
             <div className="space-y-3">
               <Label>Paid by</Label>
-              <Select value={formData.payerId} onValueChange={(value) => setFormData({...formData, payerId: value})}>
+              <Select value={formData.payerId} onValueChange={(value: string) => setFormData({...formData, payerId: value})}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -265,7 +367,49 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser }: 
               </div>
               
               <div className="space-y-2">
-                {groupMembers.map((member) => (
+                {/* Show only current user and one other member for 2-person splits */}
+                {[currentUser, groupMembers.find(member => member.id !== currentUser?.id)].filter(Boolean).map((member) => (
+                  <div key={member!.id} className="flex items-center justify-between p-3 rounded-lg border">
+                    <div className="flex items-center gap-3">
+                      <Checkbox
+                        checked={formData.selectedMembers.has(member!.id)}
+                        onCheckedChange={() => handleMemberToggle(member!.id)}
+                        disabled={groupMembers.length <= 2} // Disable checkboxes for 2-person groups
+                      />
+                      <Avatar className="w-8 h-8">
+                        <AvatarFallback>{member!.avatar}</AvatarFallback>
+                      </Avatar>
+                      <span className="font-medium">{member!.name}</span>
+                    </div>
+
+                    {formData.splitMethod === "equally" && formData.selectedMembers.has(member!.id) && (
+                      <span className="text-sm text-muted-foreground">
+                        ₹{splitAmount.toFixed(2)}
+                      </span>
+                    )}
+
+                    {formData.splitMethod === "custom" && formData.selectedMembers.has(member!.id) && (
+                      <div className="w-24">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={formData.customAmounts[member!.id] || ""}
+                          onChange={(e) => setFormData({
+                            ...formData,
+                            customAmounts: {
+                              ...formData.customAmounts,
+                              [member!.id]: e.target.value
+                            }
+                          })}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Show additional members if there are more than 2 in the group */}
+                {groupMembers.length > 2 && groupMembers.slice(2).map((member) => (
                   <div key={member.id} className="flex items-center justify-between p-3 rounded-lg border">
                     <div className="flex items-center gap-3">
                       <Checkbox
@@ -277,13 +421,13 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser }: 
                       </Avatar>
                       <span className="font-medium">{member.name}</span>
                     </div>
-                    
+
                     {formData.splitMethod === "equally" && formData.selectedMembers.has(member.id) && (
                       <span className="text-sm text-muted-foreground">
                         ₹{splitAmount.toFixed(2)}
                       </span>
                     )}
-                    
+
                     {formData.splitMethod === "custom" && formData.selectedMembers.has(member.id) && (
                       <div className="w-24">
                         <Input
@@ -292,7 +436,7 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser }: 
                           placeholder="0.00"
                           value={formData.customAmounts[member.id] || ""}
                           onChange={(e) => setFormData({
-                            ...formData, 
+                            ...formData,
                             customAmounts: {
                               ...formData.customAmounts,
                               [member.id]: e.target.value
@@ -348,11 +492,18 @@ export function AddExpenseModal({ isOpen, onClose, groupMembers, currentUser }: 
 
             {/* Action Buttons */}
             <div className="flex gap-3 pt-4">
-              <Button type="button" variant="outline" className="flex-1" onClick={onClose}>
+              <Button type="button" variant="outline" className="flex-1" onClick={handleClose}>
                 Cancel
               </Button>
-              <Button type="submit" className="flex-1">
-                Add Expense
+              <Button type="submit" className="flex-1" disabled={isLoading}>
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  "Add Expense"
+                )}
               </Button>
             </div>
           </form>

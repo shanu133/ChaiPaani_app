@@ -202,3 +202,20 @@ If you have any questions or need help:
 ---
 
 **Happy splitting! 🎉**
+
+## 🔥 Firebase Hosting
+
+This app can be deployed to Firebase Hosting as a static SPA.
+
+Setup:
+- Ensure Firebase CLI is installed and you’re logged in: `npm i -g firebase-tools` then `firebase login`.
+- Update `.firebaserc` with your Firebase project id.
+- Confirm `firebase.json` points `public` to `build` and rewrites all routes to `/index.html`.
+
+Deploy:
+1. Build the app: `npm run build` (emits to `build/`).
+2. Preview locally (optional): `firebase emulators:start --only hosting`.
+3. Deploy: `firebase deploy --only hosting`.
+
+Environment:
+- Supabase env vars use Vite prefixes (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY). Set these before building for production, or in your CI.
