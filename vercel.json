@@ -7,7 +7,7 @@
     {
       "source": "/index.html",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache" }
+        { "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }
       ]
     },
     {
@@ -19,6 +19,7 @@
   ],
   "routes": [
     { "handle": "filesystem" },
-    { "src": "/[^.]*", "dest": "/index.html" }
+    { "src": "/assets/.*", "status": 404 },
+    { "src": "^/(?!.*\\.).*$", "dest": "/index.html" }
   ]
 }
