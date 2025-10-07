@@ -23,10 +23,17 @@ export const authService = {
   },
 
   signInWithGoogle: async () => {
+    const redirectUrl = (import.meta as any).env?.VITE_SUPABASE_REDIRECT_URL || window.location.origin
+    try {
+      // Minimal diagnostic to confirm where Supabase will redirect back
+      // This helps catch cases where localhost sneaks into production
+      // eslint-disable-next-line no-console
+      console.info('[Auth] Using OAuth redirectTo:', redirectUrl)
+    } catch {}
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || window.location.origin
+        redirectTo: redirectUrl
       }
     })
     return { data, error }
