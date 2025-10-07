@@ -21,6 +21,11 @@ export default function App() {
   const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
   const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(null);
 
+  // Ensure page title reflects branding even if HTML was cached
+  useEffect(() => {
+    try { document.title = 'ChaiPaani : Easy Splitting'; } catch {}
+  }, []);
+
   // Check for existing authentication on app load
   useEffect(() => {
     const checkAuth = async () => {
