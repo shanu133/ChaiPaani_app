@@ -754,20 +754,100 @@ export const invitationService = {
 
       if (inviteError) return { data: null, error: inviteError }
 
-      // Optional: Try Edge Function for email delivery only if enabled
-      if ((import.meta as any).env?.VITE_ENABLE_INVITE_EMAIL === 'true') {
+      // Email delivery path
+      const enableSmtp = (import.meta as any).env?.VITE_ENABLE_SMTP === 'true'
+      const enableLegacyInvite = (import.meta as any).env?.VITE_ENABLE_INVITE_EMAIL === 'true'
+      // Try SMTP first if enabled, else fall back to legacy edge invite function
+      if (enableSmtp) {
+        try {
+          // Fetch group name for a nicer email
+          const { data: groupData } = await supabase
+            .from('groups')
+            .select('name')
+            .eq('id', groupId)
+            .single()
+
+          const base = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.replace(/\/$/, '')
+            || (typeof window !== 'undefined' ? window.location.origin : '')
+            || ''
+          const inviteUrl = `${base}/#token=${encodeURIComponent(invitation.token)}`
+          const title = `You're invited to join ${groupData?.name || 'a group'} on ChaiPaani`
+          const html = `
+            <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height:1.6;">
+              <h2>${title}</h2>
+              <p>Hello,</p>
+              <p>You have been invited to join <strong>${groupData?.name || 'a group'}</strong> on ChaiPaani.</p>
+              <p>Click the button below to accept your invitation and get started:</p>
+              <p style="margin:20px 0;">
+                <a href="${inviteUrl}" style="background:#3b82f6;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;display:inline-block">Accept Invitation</a>
+              </p>
+              <p>Or copy and paste this link into your browser:</p>
+              <p><a href="${inviteUrl}">${inviteUrl}</a></p>
+              <hr style="border:none;border-top:1px solid #eee;margin:24px 0" />
+              <p style="color:#64748b;font-size:12px">If you didn't expect this invitation, you can ignore this email.</p>
+            </div>
+          `
+          await supabase.functions.invoke('smtp-send', {
+            body: { to: email.toLowerCase(), subject: title, html }
+          })
+        } catch (emailError) {
+          console.warn('SMTP email delivery failed, invitation still created:', emailError)
+        }
+      } else if (enableLegacyInvite) {
         try {
           await supabase.functions.invoke('invite-user', {
             body: { groupId, email, token: invitation.token }
           })
         } catch (emailError) {
-          console.warn('Email delivery failed (or CORS), but invitation created:', emailError)
+          console.warn('Legacy email delivery failed (or CORS), but invitation created:', emailError)
         }
       }
 
       return { data: { ok: true, token: invitation.token }, error: null }
     } catch (error) {
       console.error('Error in inviteUser:', error)
+      return { data: null, error }
+    }
+  },
+  resendInvite: async (groupId: string, email: string) => {
+    try {
+      // Look up pending invite for this email
+      const { data: invites, error } = await supabase
+        .from('invitations')
+        .select('token, status')
+        .eq('group_id', groupId)
+        .eq('invitee_email', email.toLowerCase())
+        .order('created_at', { ascending: false })
+        .limit(1)
+
+      if (error) return { data: null, error }
+      const invite = invites?.[0]
+      if (!invite || invite.status !== 'pending') {
+        return { data: null, error: { message: 'No pending invitation found for this email' } }
+      }
+
+      const base = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.replace(/\/$/, '')
+        || (typeof window !== 'undefined' ? window.location.origin : '')
+        || ''
+      const inviteUrl = `${base}/#token=${encodeURIComponent(invite.token)}`
+      const title = `ChaiPaani invitation reminder`
+      const html = `
+        <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height:1.6;">
+          <h3>${title}</h3>
+          <p>This is a friendly reminder to join the group. Click below to accept:</p>
+          <p style="margin:20px 0;">
+            <a href="${inviteUrl}" style="background:#3b82f6;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;display:inline-block">Accept Invitation</a>
+          </p>
+          <p>Or open this link: <a href="${inviteUrl}">${inviteUrl}</a></p>
+        </div>
+      `
+      const { data, error: sendErr } = await supabase.functions.invoke('smtp-send', {
+        body: { to: email.toLowerCase(), subject: title, html }
+      })
+      if (sendErr) return { data: null, error: sendErr }
+      if (!data?.ok) return { data: null, error: { message: data?.error || 'Failed to send email' } as any }
+      return { data: { ok: true }, error: null }
+    } catch (error) {
       return { data: null, error }
     }
   },

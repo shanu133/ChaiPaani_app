@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Separator } from "./ui/separator";
@@ -12,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
 import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
 import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
-import { toast } from "sonner";
+import * as Sonner from "sonner";
 import { profileService, authService } from "../lib/supabase-service";
 import { 
   ArrowLeft,
@@ -20,23 +19,18 @@ import {
   Bell,
   Shield,
   Palette,
-  Moon,
-  Sun,
-  Globe,
-  Smartphone,
-  Mail,
-  Lock,
+  
   Trash2,
   Download,
   Upload,
-  CreditCard,
-  Settings,
+  
   LogOut,
   Camera,
   Edit,
   Save,
   X
 } from "lucide-react";
+import SmtpSettingsModal from "./smtp-settings-modal";
 
 interface SettingsPageProps {
   onBack: () => void;
@@ -47,6 +41,7 @@ interface SettingsPageProps {
 export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProps) {
   const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'privacy' | 'appearance' | 'data'>('profile');
   const [isEditing, setIsEditing] = useState(false);
+  const [smtpOpen, setSmtpOpen] = useState(false);
   
   // Profile settings (loaded from Supabase)
   const [profile, setProfile] = useState({
@@ -125,45 +120,45 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
     try {
       const displayName = profile.name?.trim();
       if (!displayName) {
-        toast.error("Name cannot be empty");
+        (Sonner as any)?.toast?.error?.("Name cannot be empty");
         return;
       }
       const { error } = await profileService.updateDisplayName(displayName);
       if (error) {
-        toast.error(error.message || "Failed to update profile");
+        (Sonner as any)?.toast?.error?.(error.message || "Failed to update profile");
         return;
       }
       setIsEditing(false);
-      toast.success("Profile updated successfully!");
+      (Sonner as any)?.toast?.success?.("Profile updated successfully!");
     } catch (e: any) {
-      toast.error(e?.message || "Failed to update profile");
+      (Sonner as any)?.toast?.error?.(e?.message || "Failed to update profile");
     }
   };
 
   const handleDeleteAccount = () => {
-    toast.error("Account deletion requested. Please contact support.");
+    (Sonner as any)?.toast?.error?.("Account deletion requested. Please contact support.");
   };
 
   const handleExportData = () => {
-    toast.success("Data export started. You'll receive an email when ready.");
+    (Sonner as any)?.toast?.success?.("Data export started. You'll receive an email when ready.");
   };
 
-  const handleImportData = () => {
-    toast.success("Data import feature coming soon!");
-  };
+  // const handleImportData = () => {
+  //   (Sonner as any)?.toast?.success?.("Data import feature coming soon!");
+  // };
 
   const handleChangePhoto = () => {
-    toast.success("Photo upload feature coming soon!");
+    (Sonner as any)?.toast?.success?.("Photo upload feature coming soon!");
   };
 
   const handleAppearanceChange = (setting: string, value: any) => {
     setAppearance(prev => ({ ...prev, [setting]: value }));
     if (setting === 'theme') {
-      toast.success(`Theme changed to ${value}`);
+      (Sonner as any)?.toast?.success?.(`Theme changed to ${value}`);
     } else if (setting === 'compactView') {
-      toast.success(`Compact view ${value ? 'enabled' : 'disabled'}`);
+      (Sonner as any)?.toast?.success?.(`Compact view ${value ? 'enabled' : 'disabled'}`);
     } else {
-      toast.success("Appearance setting updated!");
+      (Sonner as any)?.toast?.success?.("Appearance setting updated!");
     }
   };
 
@@ -393,6 +388,17 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                 <CardTitle>Notification Preferences</CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
+                {/* Email delivery via SMTP */}
+                <div className="p-4 border rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">Email Delivery (SMTP)</p>
+                      <p className="text-sm text-muted-foreground">Configure SMTP to send invitations and updates.</p>
+                    </div>
+                    <Button variant="outline" onClick={() => setSmtpOpen(true)}>Configure</Button>
+                  </div>
+                </div>
+
                 {/* General Notifications */}
                 <div>
                   <h3 className="font-medium mb-4">General Notifications</h3>
@@ -699,6 +705,7 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
           </TabsContent>
         </Tabs>
       </main>
+      <SmtpSettingsModal open={smtpOpen} onOpenChange={setSmtpOpen} />
     </div>
   );
 }
