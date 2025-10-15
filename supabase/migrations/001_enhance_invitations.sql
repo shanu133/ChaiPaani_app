@@ -127,6 +127,9 @@ $$;
 GRANT EXECUTE ON FUNCTION create_invitation_with_expiry TO authenticated;
 
 -- Step 6: Enhanced accept_group_invitation with expiration check
+-- Drop existing function first to allow return type change
+DROP FUNCTION IF EXISTS accept_group_invitation(UUID);
+
 CREATE OR REPLACE FUNCTION accept_group_invitation(p_token UUID)
 RETURNS JSON
 LANGUAGE plpgsql
