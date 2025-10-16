@@ -661,7 +661,8 @@ export const expenseService = {
     const user = await authService.getCurrentUser()
     if (!user) return { data: null, error: { message: 'User not authenticated' } }
 
-    // Delegate to server-side RPC for atomic settle + logging
+    // Use server-side RPC for atomic settle with advisory locks and optimistic locking
+    // This prevents race conditions and ensures all-or-nothing settlement
     const { data, error } = await supabase.rpc('settle_group_debt', {
       p_group_id: groupId,
       p_from_user: fromUserId,
@@ -670,89 +671,7 @@ export const expenseService = {
     })
 
     if (error) {
-      // Use structured error normalization to detect RPC function not found
-      const normalized = normalizeSupabaseError(error, {
-        type: 'not_found',
-        fallbackMessage: 'RPC function not found'
-      })
-      if (!normalized?.isNotFound) {
-        return { data: null, error }
-      }
-
-      // Fallback path: perform client-side settle if RPC isn't available yet
-      try {
-        // Find unsettled expense splits that can be settled (join-safe selection)
-        const { data: splitsToSettle, error: fetchError } = await supabase
-          .from('expense_splits')
-          .select('id, amount, expense_id, is_settled')
-          .eq('user_id', fromUserId)
-          .eq('is_settled', false)
-          .order('created_at', { ascending: true })
-
-        if (fetchError) return { data: null, error: fetchError }
-
-        let remainingAmount = amount
-        let totalSettled = 0
-        const settledSplits: string[] = []
-
-        for (const split of splitsToSettle || []) {
-          if (remainingAmount <= 0) break
-          const { data: exp, error: expErr } = await supabase
-            .from('expenses')
-            .select('id, payer_id, group_id')
-            .eq('id', split.expense_id)
-            .single()
-
-          if (expErr || !exp) continue
-          if (exp.payer_id === toUserId && exp.group_id === groupId) {
-            // Only settle full splits to avoid marking partially-paid splits as settled
-            if (remainingAmount >= (split as any).amount) {
-              // Verify user can settle this split (either the payer or the one who owes)
-              if (exp.payer_id !== user.id && fromUserId !== user.id) {
-                continue
-              }
-
-              const { error: settleError } = await supabase
-                .from('expense_splits')
-                .update({
-                  is_settled: true,
-                  settled_at: new Date().toISOString()
-                })
-                .eq('id', (split as any).id)
-
-              if (settleError) continue
-              settledSplits.push((split as any).id)
-              remainingAmount -= (split as any).amount
-              totalSettled += (split as any).amount
-            } else {
-              break
-            }
-          }
-        }
-
-        if (totalSettled > 0) {
-          await supabase
-            .from('settlements')
-            .insert({
-              group_id: groupId,
-              payer_id: fromUserId,
-              receiver_id: toUserId,
-              amount: totalSettled,
-              description: 'Settle up'
-            })
-        }
-
-        return {
-          data: {
-            settled_splits: settledSplits,
-            settled_amount: totalSettled,
-            remaining_amount: remainingAmount
-          },
-          error: null
-        }
-      } catch (e: any) {
-        return { data: null, error: { message: e?.message || 'Fallback settle failed' } }
-      }
+      return { data: null, error }
     }
 
     return {
