@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from "./ui/label";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
-import * as Sonner from "sonner";
+import { toast } from "sonner";
 import { supabase } from "../lib/supabase";
 
 interface SmtpSettingsModalProps {
@@ -19,14 +19,14 @@ export function SmtpSettingsModal({ open, onOpenChange }: SmtpSettingsModalProps
     // Validate test email
     const email = testEmail.trim();
     if (!email) {
-      (Sonner as any)?.toast?.error?.("Please enter a test email address");
+      toast.error("Please enter a test email address");
       return;
     }
     
     // Basic email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      (Sonner as any)?.toast?.error?.("Please enter a valid email address");
+      toast.error("Please enter a valid email address");
       return;
     }
 
@@ -43,19 +43,19 @@ export function SmtpSettingsModal({ open, onOpenChange }: SmtpSettingsModalProps
       });
 
       if (error) {
-        (Sonner as any)?.toast?.error?.(error.message || "Failed to send test email");
+        toast.error(error.message || "Failed to send test email");
         return;
       }
 
       if (!data?.ok) {
-        (Sonner as any)?.toast?.error?.(data?.error || "SMTP function returned an error");
+        toast.error(data?.error || "SMTP function returned an error");
         return;
       }
 
-      (Sonner as any)?.toast?.success?.("Test email sent successfully! Check your inbox.");
+      toast.success("Test email sent successfully! Check your inbox.");
       setTestEmail(""); // Clear email after successful send
     } catch (e: any) {
-      (Sonner as any)?.toast?.error?.(e?.message || "Could not send test email");
+      toast.error(e?.message || "Could not send test email");
     } finally {
       setIsSending(false);
     }
