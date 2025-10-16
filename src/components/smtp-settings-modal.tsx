@@ -1,120 +1,44 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import { Label } from "./ui/label";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
-import { Switch } from "./ui/switch";
-import { Separator } from "./ui/separator";
 import * as Sonner from "sonner";
 import { supabase } from "../lib/supabase";
-
-type SmtpConfig = {
-  host: string;
-  port: string; // keep as string for input handling
-  username: string;
-  password: string;
-  fromName: string;
-  fromEmail: string;
-  secure: boolean; // TLS/STARTTLS
-};
 
 interface SmtpSettingsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-// Local storage keys for ephemeral client-side config. Do NOT ship secrets to clients in production.
-const LS_KEY = "smtp_config_local";
-
-function loadLocal(): SmtpConfig | null {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return null;
-    const obj = JSON.parse(raw);
-    return {
-      host: obj.host || "",
-      port: obj.port || "587",
-      username: obj.username || "",
-      password: "", // never rehydrate password back into inputs
-      fromName: obj.fromName || "ChaiPaani",
-      fromEmail: obj.fromEmail || "noreply@example.com",
-      secure: Boolean(obj.secure),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function saveLocal(cfg: Partial<SmtpConfig>) {
-  try {
-    const existing = loadLocal() || {
-      host: "",
-      port: "587",
-      username: "",
-      password: "",
-      fromName: "ChaiPaani",
-      fromEmail: "noreply@example.com",
-      secure: false,
-    } as SmtpConfig;
-    const merged = { ...existing, ...cfg };
-    // Never persist the password
-    const { password, ...rest } = merged;
-    localStorage.setItem(LS_KEY, JSON.stringify(rest));
-  } catch {
-    // ignore
-  }
-}
-
 export function SmtpSettingsModal({ open, onOpenChange }: SmtpSettingsModalProps) {
-  console.log("SmtpSettingsModal rendered, open:", open);
-  
-  const [cfg, setCfg] = useState<SmtpConfig>(
-    () =>
-      loadLocal() || {
-        host: "",
-        port: "587",
-        username: "",
-        password: "",
-        fromName: "ChaiPaani",
-        fromEmail: "noreply@example.com",
-        secure: true,
-      }
-  );
   const [testEmail, setTestEmail] = useState("");
   const [isSending, setIsSending] = useState(false);
 
-  useEffect(() => {
-    // Persist changes except password
-    saveLocal(cfg);
-  }, [cfg.host, cfg.port, cfg.username, cfg.fromName, cfg.fromEmail, cfg.secure]);
-
-  const canSend = useMemo(() => {
-    return (
-      cfg.host.trim() &&
-      cfg.port.trim() &&
-      cfg.username.trim() &&
-      cfg.password.trim() &&
-      cfg.fromEmail.trim() &&
-      testEmail.trim()
-    );
-  }, [cfg, testEmail]);
-
   const handleSendTest = async () => {
+    // Validate test email
+    const email = testEmail.trim();
+    if (!email) {
+      (Sonner as any)?.toast?.error?.("Please enter a test email address");
+      return;
+    }
+    
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      (Sonner as any)?.toast?.error?.("Please enter a valid email address");
+      return;
+    }
+
     try {
-      if (!canSend) {
-        (Sonner as any)?.toast?.error?.("Fill SMTP fields and a test email first");
-        return;
-      }
       setIsSending(true);
 
-      // Invoke an Edge Function to send mail using server-side SMTP creds.
-      // The function should read its SMTP settings from environment, not from client.
-      // We pass only the recipient and allow a server-side template to be used.
+      // Invoke Edge Function - server-side SMTP configuration is used
       const { data, error } = await supabase.functions.invoke("smtp-send", {
         body: {
-          to: testEmail,
-          subject: "ChaiPaani SMTP test",
-          html: `<p>This is a test email from ChaiPaani.</p><p>Time: ${new Date().toISOString()}</p>`
+          to: email,
+          subject: "ChaiPaani SMTP Test",
+          html: `<p>This is a test email from ChaiPaani.</p><p>If you received this, your SMTP configuration is working correctly.</p><p>Sent at: ${new Date().toISOString()}</p>`
         },
       });
 
@@ -128,9 +52,8 @@ export function SmtpSettingsModal({ open, onOpenChange }: SmtpSettingsModalProps
         return;
       }
 
-      (Sonner as any)?.toast?.success?.("Test email sent. Check your inbox.");
-      // Clear the password after use
-      setCfg((prev) => ({ ...prev, password: "" }));
+      (Sonner as any)?.toast?.success?.("Test email sent successfully! Check your inbox.");
+      setTestEmail(""); // Clear email after successful send
     } catch (e: any) {
       (Sonner as any)?.toast?.error?.(e?.message || "Could not send test email");
     } finally {
@@ -140,105 +63,41 @@ export function SmtpSettingsModal({ open, onOpenChange }: SmtpSettingsModalProps
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[560px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>SMTP Settings</DialogTitle>
+          <DialogTitle>Test SMTP Configuration</DialogTitle>
           <DialogDescription>
-            Configure email delivery. For production, set credentials in your backend/Edge Functions env.
+            Send a test email to verify your server's SMTP configuration. SMTP credentials are configured in your Supabase Edge Function environment variables (SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, etc).
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 pt-2">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>SMTP Host</Label>
-              <Input
-                placeholder="smtp.sendgrid.net"
-                value={cfg.host}
-                onChange={(e) => setCfg((p) => ({ ...p, host: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Port</Label>
-              <Input
-                type="number"
-                placeholder="587"
-                value={cfg.port}
-                onChange={(e) => setCfg((p) => ({ ...p, port: e.target.value }))}
-                min={1}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Username</Label>
-              <Input
-                placeholder="apikey"
-                value={cfg.username}
-                onChange={(e) => setCfg((p) => ({ ...p, username: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Password</Label>
-              <Input
-                type="password"
-                placeholder="••••••••"
-                value={cfg.password}
-                onChange={(e) => setCfg((p) => ({ ...p, password: e.target.value }))}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>From Name</Label>
-              <Input
-                placeholder="ChaiPaani"
-                value={cfg.fromName}
-                onChange={(e) => setCfg((p) => ({ ...p, fromName: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>From Email</Label>
-              <Input
-                type="email"
-                placeholder="noreply@your-domain.com"
-                value={cfg.fromEmail}
-                onChange={(e) => setCfg((p) => ({ ...p, fromEmail: e.target.value }))}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <Label className="block">Use TLS (STARTTLS/SSL)</Label>
-              <p className="text-xs text-muted-foreground">Enable for ports 465/587 depending on your provider.</p>
-            </div>
-            <Switch
-              checked={cfg.secure}
-              onCheckedChange={(checked) => setCfg((p) => ({ ...p, secure: checked }))}
-            />
-          </div>
-
-          <Separator />
-
+        <div className="space-y-4 pt-4">
           <div className="space-y-2">
-            <Label>Send a test email</Label>
+            <Label htmlFor="test-email">Test Email Address</Label>
             <div className="flex gap-2 items-center">
               <Input
+                id="test-email"
                 type="email"
                 placeholder="you@example.com"
                 value={testEmail}
                 onChange={(e) => setTestEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !isSending) {
+                    handleSendTest();
+                  }
+                }}
                 className="flex-1"
+                autoComplete="email"
               />
-              <Button onClick={handleSendTest} disabled={isSending || !canSend}>
+              <Button 
+                onClick={handleSendTest} 
+                disabled={isSending || !testEmail.trim()}
+              >
                 {isSending ? "Sending..." : "Send Test"}
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Note: The actual SMTP credentials must be configured on the server. These fields help you validate settings locally.
+              Enter your email address to receive a test message. The email will be sent using the SMTP settings configured on the server.
             </p>
           </div>
         </div>
