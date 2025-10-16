@@ -757,8 +757,18 @@ export const invitationService = {
       // Email delivery path
       const enableSmtp = (import.meta as any).env?.VITE_ENABLE_SMTP === 'true'
       const enableLegacyInvite = (import.meta as any).env?.VITE_ENABLE_INVITE_EMAIL === 'true'
+      
+      // Debug logging
+      console.log('📧 Email delivery check:', {
+        enableSmtp,
+        enableLegacyInvite,
+        VITE_ENABLE_SMTP: (import.meta as any).env?.VITE_ENABLE_SMTP,
+        email: email.toLowerCase()
+      })
+      
       // Try SMTP first if enabled, else fall back to legacy edge invite function
       if (enableSmtp) {
+        console.log('✅ SMTP enabled, sending email...')
         try {
           // Fetch group name for a nicer email
           const { data: groupData } = await supabase
@@ -787,11 +797,13 @@ export const invitationService = {
               <p style="color:#64748b;font-size:12px">If you didn't expect this invitation, you can ignore this email.</p>
             </div>
           `
-          await supabase.functions.invoke('smtp-send', {
+          console.log('📤 Invoking smtp-send function...', { to: email.toLowerCase(), subject: title })
+          const smtpResult = await supabase.functions.invoke('smtp-send', {
             body: { to: email.toLowerCase(), subject: title, html }
           })
+          console.log('📬 SMTP result:', smtpResult)
         } catch (emailError) {
-          console.warn('SMTP email delivery failed, invitation still created:', emailError)
+          console.error('❌ SMTP email delivery failed, invitation still created:', emailError)
         }
       } else if (enableLegacyInvite) {
         try {
