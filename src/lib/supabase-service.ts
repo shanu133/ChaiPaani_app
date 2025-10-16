@@ -1,5 +1,84 @@
 import { supabase } from './supabase'
 
+/**
+ * Error normalization helper for Supabase/Postgres errors
+ * 
+ * Supabase client errors follow the PostgREST error format:
+ * - error.code: PostgREST error code (e.g., 'PGRST116' for RPC function not found, '42501' for Postgres permission denied)
+ * - error.details: Additional error details from Postgres
+ * - error.hint: Postgres error hints
+ * - error.message: Human-readable error message
+ * 
+ * Common Postgres error codes (SQLSTATE):
+ * - '42501': insufficient_privilege (permission denied)
+ * - '23503': foreign_key_violation
+ * - '23505': unique_violation
+ * - '42P01': undefined_table
+ * - 'PGRST116': RPC function not found (PostgREST specific)
+ * 
+ * LIMITATION: RLS policy violations don't have specific error codes and manifest as
+ * generic permission errors, so we must fall back to message inspection as last resort.
+ */
+type ErrorNormalizationType = 'membership' | 'not_found' | 'unknown'
+
+interface NormalizeErrorOptions {
+  type: ErrorNormalizationType
+  fallbackMessage: string
+}
+
+function normalizeSupabaseError(error: any, options: NormalizeErrorOptions) {
+  if (!error) return null
+
+  // Check structured error codes first (preferred approach)
+  const errorCode = error.code || (error as any).error_code
+  const errorDetails = error.details || ''
+  
+  if (options.type === 'membership') {
+    // Postgres permission denied code (insufficient_privilege)
+    if (errorCode === '42501') {
+      return { message: options.fallbackMessage }
+    }
+    
+    // Check error details for RLS policy violations
+    if (errorDetails.toLowerCase().includes('policy')) {
+      return { message: options.fallbackMessage }
+    }
+    
+    // LAST RESORT: Message substring inspection
+    // This is fragile but necessary because RLS violations don't have specific codes
+    const msg = (error.message || '').toLowerCase()
+    if (msg.includes('not a member') || msg.includes('permission denied') || msg.includes('rls')) {
+      return { message: options.fallbackMessage }
+    }
+  }
+  
+  if (options.type === 'not_found') {
+    // PostgREST RPC function not found
+    if (errorCode === 'PGRST116') {
+      return { isNotFound: true }
+    }
+    
+    // HTTP 404 status
+    if ((error as any)?.status === 404) {
+      return { isNotFound: true }
+    }
+    
+    // Postgres undefined table/function
+    if (errorCode === '42P01' || errorCode === '42883') {
+      return { isNotFound: true }
+    }
+    
+    // LAST RESORT: Message substring inspection
+    const msg = (error.message || '').toLowerCase()
+    if (msg.includes('not found') || msg.includes('does not exist')) {
+      return { isNotFound: true }
+    }
+  }
+  
+  // Return original error if no normalization applies
+  return null
+}
+
 export const authService = {
   signUp: async (email: string, password: string, fullName: string) => {
     const { data, error } = await supabase.auth.signUp({
@@ -358,10 +437,13 @@ export const expenseService = {
       .single()
 
     if (expenseError) {
-      // Normalize common membership errors
-      const msg = (expenseError.message || '').toLowerCase()
-      if (msg.includes('not a member') || msg.includes('permission denied') || msg.includes('rls')) {
-        return { data: null, error: { message: 'User is not a member of this group' } }
+      // Use structured error normalization instead of fragile message substring checks
+      const normalized = normalizeSupabaseError(expenseError, {
+        type: 'membership',
+        fallbackMessage: 'User is not a member of this group'
+      })
+      if (normalized) {
+        return { data: null, error: normalized }
       }
       return { data: null, error: expenseError }
     }
@@ -588,9 +670,12 @@ export const expenseService = {
     })
 
     if (error) {
-      const msg = (error.message || '').toLowerCase()
-      const isMissing = (error as any)?.status === 404 || msg.includes('not found') || msg.includes('does not exist')
-      if (!isMissing) {
+      // Use structured error normalization to detect RPC function not found
+      const normalized = normalizeSupabaseError(error, {
+        type: 'not_found',
+        fallbackMessage: 'RPC function not found'
+      })
+      if (!normalized?.isNotFound) {
         return { data: null, error }
       }
 
@@ -802,20 +887,52 @@ export const invitationService = {
             body: { to: email.toLowerCase(), subject: title, html }
           })
           console.log('📬 SMTP result:', smtpResult)
+          
+          // Check if email actually sent successfully
+          if (smtpResult.error) {
+            console.error('❌ SMTP function error:', smtpResult.error)
+            return { 
+              data: { ok: true, token: invitation.token, emailSent: false, emailError: smtpResult.error }, 
+              error: null 
+            }
+          }
+          if (!smtpResult.data?.ok) {
+            console.error('❌ SMTP send failed:', smtpResult.data)
+            return { 
+              data: { ok: true, token: invitation.token, emailSent: false, emailError: smtpResult.data?.error || 'SMTP send failed' }, 
+              error: null 
+            }
+          }
+          
+          // Email sent successfully
+          return { 
+            data: { ok: true, token: invitation.token, emailSent: true, smtpResult: smtpResult.data }, 
+            error: null 
+          }
         } catch (emailError) {
-          console.error('❌ SMTP email delivery failed, invitation still created:', emailError)
+          console.error('❌ SMTP email delivery exception, invitation still created:', emailError)
+          return { 
+            data: { ok: true, token: invitation.token, emailSent: false, emailError: emailError instanceof Error ? emailError.message : String(emailError) }, 
+            error: null 
+          }
         }
       } else if (enableLegacyInvite) {
         try {
           await supabase.functions.invoke('invite-user', {
             body: { groupId, email, token: invitation.token }
           })
+          return { data: { ok: true, token: invitation.token, emailSent: true }, error: null }
         } catch (emailError) {
           console.warn('Legacy email delivery failed (or CORS), but invitation created:', emailError)
+          return { 
+            data: { ok: true, token: invitation.token, emailSent: false, emailError: emailError instanceof Error ? emailError.message : String(emailError) }, 
+            error: null 
+          }
         }
       }
 
-      return { data: { ok: true, token: invitation.token }, error: null }
+      // No email service enabled - invitation created but no email sent
+      return { data: { ok: true, token: invitation.token, emailSent: false, emailError: 'SMTP not enabled' }, error: null }
     } catch (error) {
       console.error('Error in inviteUser:', error)
       return { data: null, error }
