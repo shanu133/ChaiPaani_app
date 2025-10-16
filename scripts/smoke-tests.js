@@ -36,24 +36,32 @@ async function run() {
 
   console.log('Signing in as primary user...')
   await signIn(primaryEmail, primaryPassword)
-
+  
+  // Get current user once and reuse
+  const { data: userData, error: userError } = await supabase.auth.getUser()
+  if (userError || !userData?.user) {
+    throw new Error('Failed to get authenticated user: ' + (userError?.message || 'User not found'))
+  }
+  const user = userData.user
+  
   // 1) Create group
   console.log('Creating group:', groupName)
   const { data: group, error: groupErr } = await supabase
     .from('groups')
-    .insert({ name: groupName, description: 'smoke', category: 'general', currency: 'INR', created_by: (await supabase.auth.getUser()).data.user.id })
+    .insert({ name: groupName, description: 'smoke', category: 'general', currency: 'INR', created_by: user.id })
     .select('*')
     .single()
   if (groupErr) throw groupErr
 
   // Add creator as member
-  await supabase.from('group_members').insert({ group_id: group.id, user_id: (await supabase.auth.getUser()).data.user.id, role: 'admin' })
-
+  const { error: memberErr } = await supabase.from('group_members').insert({ group_id: group.id, user_id: user.id, role: 'admin' })
+  if (memberErr) throw memberErr
+  
   // 2) Invite secondary user (record only; email send is out-of-band)
   console.log('Creating invitation for', inviteeEmail)
   const { data: invite, error: invErr } = await supabase
     .from('invitations')
-    .insert({ group_id: group.id, inviter_id: (await supabase.auth.getUser()).data.user.id, invitee_email: inviteeEmail.toLowerCase() })
+    .insert({ group_id: group.id, inviter_id: user.id, invitee_email: inviteeEmail.toLowerCase() })
     .select('*')
     .single()
   if (invErr) throw invErr
@@ -65,7 +73,6 @@ async function run() {
 
   // 4) Add an expense and splits
   console.log('Adding expense and splits...')
-  const user = (await supabase.auth.getUser()).data.user
   const { data: exp, error: expErr } = await supabase
     .from('expenses')
     .insert({ group_id: group.id, payer_id: user.id, description: 'Dinner', amount: 1000, category: 'food' })
@@ -73,8 +80,20 @@ async function run() {
     .single()
   if (expErr) throw expErr
 
-  // Find invitee profile id
-  const { data: inviteeProfile } = await supabase.from('profiles').select('id').eq('email', inviteeEmail).single()
+  // Find invitee profile id with proper error handling
+  const { data: inviteeProfile, error: profileErr } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('email', inviteeEmail)
+    .single()
+  
+  if (profileErr) {
+    throw new Error(`Failed to query profile for ${inviteeEmail}: ${profileErr.message}`)
+  }
+  if (!inviteeProfile || !inviteeProfile.id) {
+    throw new Error(`Profile not found for ${inviteeEmail}. User may not have completed signup.`)
+  }
+  
   const { error: splitErr } = await supabase
     .from('expense_splits')
     .insert([
