@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
 import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
 import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
-import * as Sonner from "sonner";
+import { toast } from "sonner";
 import { profileService, authService } from "../lib/supabase-service";
 import { 
   ArrowLeft,
@@ -120,45 +120,45 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
     try {
       const displayName = profile.name?.trim();
       if (!displayName) {
-        (Sonner as any)?.toast?.error?.("Name cannot be empty");
+        toast.error("Name cannot be empty");
         return;
       }
       const { error } = await profileService.updateDisplayName(displayName);
       if (error) {
-        (Sonner as any)?.toast?.error?.(error.message || "Failed to update profile");
+        toast.error(error.message || "Failed to update profile");
         return;
       }
       setIsEditing(false);
-      (Sonner as any)?.toast?.success?.("Profile updated successfully!");
+      toast.success("Profile updated successfully!");
     } catch (e: any) {
-      (Sonner as any)?.toast?.error?.(e?.message || "Failed to update profile");
+      toast.error(e?.message || "Failed to update profile");
     }
   };
 
   const handleDeleteAccount = () => {
-    (Sonner as any)?.toast?.error?.("Account deletion requested. Please contact support.");
+    toast.error("Account deletion requested. Please contact support.");
   };
 
   const handleExportData = () => {
-    (Sonner as any)?.toast?.success?.("Data export started. You'll receive an email when ready.");
+    toast.success("Data export started. You'll receive an email when ready.");
   };
 
   // const handleImportData = () => {
-  //   (Sonner as any)?.toast?.success?.("Data import feature coming soon!");
+  //   toast.success("Data import feature coming soon!");
   // };
 
   const handleChangePhoto = () => {
-    (Sonner as any)?.toast?.success?.("Photo upload feature coming soon!");
+    toast.success("Photo upload feature coming soon!");
   };
 
   const handleAppearanceChange = (setting: string, value: any) => {
     setAppearance(prev => ({ ...prev, [setting]: value }));
     if (setting === 'theme') {
-      (Sonner as any)?.toast?.success?.(`Theme changed to ${value}`);
+      toast.success(`Theme changed to ${value}`);
     } else if (setting === 'compactView') {
-      (Sonner as any)?.toast?.success?.(`Compact view ${value ? 'enabled' : 'disabled'}`);
+      toast.success(`Compact view ${value ? 'enabled' : 'disabled'}`);
     } else {
-      (Sonner as any)?.toast?.success?.("Appearance setting updated!");
+      toast.success("Appearance setting updated!");
     }
   };
 
