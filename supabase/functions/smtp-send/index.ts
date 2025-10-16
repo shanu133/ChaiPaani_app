@@ -39,8 +39,8 @@ Deno.serve(async (req) => {
 
   try {
     const { to, subject, html, text } = (await req.json()) as SendBody;
-    if (!to || !subject) {
-      return new Response(JSON.stringify({ ok: false, error: "Missing 'to' or 'subject'" }), {
+    if (!to || !subject || (!html && !text)) {
+      return new Response(JSON.stringify({ ok: false, error: "Missing required fields: 'to', 'subject', and at least one of 'html' or 'text'" }), {
         status: 400,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
         from: `${fromName} <${fromEmail}>`,
         to,
         subject,
-        content: html ? undefined : text || "",
+        content: text || "auto",
         html,
       });
       await client.close();
