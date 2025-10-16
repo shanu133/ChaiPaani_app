@@ -17,9 +17,9 @@ export default function App() {
   const [currentView, setCurrentView] = useState<AppView>(() => {
     // Restore last view from localStorage
     const saved = localStorage.getItem("app_current_view");
-    return (saved as AppView) || "landing";
-  });
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const validViews: AppView[] = ["landing", "auth", "dashboard", "groups", "group", "notifications", "activity", "settings"];
+    return (saved && validViews.includes(saved as AppView)) ? (saved as AppView) : "landing";
+  });  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [currentGroupId, setCurrentGroupId] = useState<string | null>(() => {
     // Restore last group ID from localStorage
@@ -61,14 +61,20 @@ export default function App() {
         if (user) {
           setIsAuthenticated(true);
           // Keep the restored view from localStorage if valid, otherwise go to dashboard
-          if (!currentView || currentView === "landing" || currentView === "auth") {
-            setCurrentView("dashboard");
-          }
-          // If view was "group" but no group ID, go to dashboard
-          if (currentView === "group" && !currentGroupId) {
-            setCurrentView("dashboard");
-          }
-        } else {
+          // Use a callback to access current state
+          setCurrentView(prevView => {
+            if (!prevView || prevView === "landing" || prevView === "auth") {
+              return "dashboard";
+            }
+            return prevView;
+          });
+          // Check group ID in a separate state update
+          setCurrentView(prevView => {
+            if (prevView === "group" && !currentGroupId) {
+              return "dashboard";
+            }
+            return prevView;
+          });        } else {
           setIsAuthenticated(false);
           setCurrentView("landing");
         }

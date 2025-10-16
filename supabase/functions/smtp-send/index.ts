@@ -1,7 +1,7 @@
 // Minimal SMTP send Edge Function.
 // IMPORTANT: Set environment variables in Supabase project:
 //  SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL, SMTP_FROM_NAME
-// Optionally: SMTP_SECURE ("true"|"false")
+// Optionally: SMTP_SECURE ("true"|"false"), SMTP_TIMEOUT_MS (default: 30000)
 
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
@@ -24,6 +24,37 @@ function boolEnv(name: string, def = false): boolean {
   if (v === "true" || v === "1" || v === "yes") return true;
   if (v === "false" || v === "0" || v === "no") return false;
   return def;
+}
+
+function numEnv(name: string, def: number): number {
+  const v = Deno.env.get(name);
+  if (!v) return def;
+  const parsed = Number(v);
+  return isNaN(parsed) ? def : parsed;
+}
+
+// Wrap SMTP operations with timeout to prevent hanging
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  operationName: string
+): Promise<T> {
+  let timeoutId: number | undefined;
+  
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${operationName} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
 }
 
 Deno.serve(async (req) => {
@@ -53,9 +84,10 @@ Deno.serve(async (req) => {
     const fromEmail = Deno.env.get("SMTP_FROM_EMAIL") ?? "noreply@example.com";
     const fromName = Deno.env.get("SMTP_FROM_NAME") ?? "ChaiPaani";
     const secure = boolEnv("SMTP_SECURE", port === 465);
+    const timeoutMs = numEnv("SMTP_TIMEOUT_MS", 30000); // Default 30 seconds
 
-    // Debug logging
-    console.log("SMTP Config:", { host, port, user: user ? "set" : "missing", pass: pass ? `set (${pass.length} chars)` : "missing", fromEmail, fromName, secure });
+    // Debug logging (without password)
+    console.log("SMTP Config:", { host, port, user: user ? "set" : "missing", pass: pass ? "set" : "missing", fromEmail, fromName, secure, timeoutMs });
 
     if (!host || !user || !pass) {
       return new Response(JSON.stringify({ ok: false, error: "SMTP env not configured" }), {
@@ -75,25 +107,45 @@ Deno.serve(async (req) => {
 
     try {
       console.log("Attempting to send email to:", to);
-      await client.send({
-        from: `${fromName} <${fromEmail}>`,
-        to,
-        subject,
-        content: text || "auto",
-        html,
-      });
-      await client.close();
+      
+      await withTimeout(
+        client.send({
+          from: `${fromName} <${fromEmail}>`,
+          to,
+          subject,
+          content: text || "auto",
+          html,
+        }),
+        timeoutMs,
+        "SMTP send operation"
+      );
+      
+      await withTimeout(
+        client.close(),
+        5000, // 5 second timeout for cleanup
+        "SMTP close connection"
+      );
+      
       console.log("Email sent successfully!");
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     } catch (e: unknown) {
-      console.error("SMTP send error:", e);
-      try { await client.close(); } catch {}
       const errorMsg = e instanceof Error ? e.message : String(e);
+      const isTimeout = errorMsg.includes("timed out");
+      
+      console.error(isTimeout ? "SMTP operation timed out:" : "SMTP send error:", errorMsg);
+      
+      // Attempt cleanup
+      try { 
+        await withTimeout(client.close(), 2000, "SMTP cleanup"); 
+      } catch (closeErr) {
+        console.error("Failed to close SMTP client:", closeErr);
+      }
+      
       return new Response(JSON.stringify({ ok: false, error: errorMsg }), {
-        status: 500,
+        status: isTimeout ? 504 : 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }

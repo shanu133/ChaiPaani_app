@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { Button } from "./ui/button";import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import { Plus, Users, RefreshCw, Mail } from "lucide-react";
@@ -55,29 +54,28 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
   const addMember = async () => {
     if (!newMemberName.trim()) {
-      console.error("Please enter member name");
+      alert("Please enter member name");
       return;
     }
 
     if (!newMemberEmail.trim()) {
-      console.error("Please enter member email");
+      alert("Please enter member email");
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(newMemberEmail)) {
-      console.error("Please enter a valid email address");
+      alert("Please enter a valid email address");
       return;
     }
-
     setIsLoading(true);
 
     try {
       if (!group?.id) {
         console.error("Group ID is missing");
+        setIsLoading(false);
         return;
       }
-
       // Invite the user to the group
       const { data: inviteData, error: inviteError } = await invitationService.inviteUser(
         group.id,
@@ -108,11 +106,10 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
     } catch (error) {
       console.error("Error in addMember:", error);
-      console.error("Failed to add member. Please try again.");
+      alert("Failed to add member. Please try again.");
     } finally {
       setIsLoading(false);
-    }
-  };
+    }  };
 
   const handleClose = () => {
     if (!isLoading) {

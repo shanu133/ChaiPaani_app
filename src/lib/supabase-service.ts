@@ -105,8 +105,10 @@ export const authService = {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || 'https://your-production-domain.com'
-      }
+        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || (() => {
+          if (typeof window !== 'undefined') return window.location.origin
+          throw new Error('VITE_SUPABASE_REDIRECT_URL must be configured')
+        })()      }
     })
     return { data, error }
   },
@@ -843,16 +845,13 @@ export const invitationService = {
             body: { groupId, email, token: invitation.token }
           })
           return { data: { ok: true, token: invitation.token, emailSent: true }, error: null }
-        } catch (emailError) {
-          console.warn('Legacy email delivery failed (or CORS), but invitation created:', emailError)
-          return { 
-            data: { ok: true, token: invitation.token, emailSent: false, emailError: emailError instanceof Error ? emailError.message : String(emailError) }, 
-            error: null 
-          }
-        }
-      }
-
-      // No email service enabled - invitation created but no email sent
+      // Debug logging (mask email PII - only log domain)
+      console.log('📧 Email delivery check:', {
+        enableSmtp,
+        enableLegacyInvite,
+        VITE_ENABLE_SMTP: (import.meta as any).env?.VITE_ENABLE_SMTP,
+        hasEmail: !!email
+      })      // No email service enabled - invitation created but no email sent
       return { data: { ok: true, token: invitation.token, emailSent: false, emailError: 'SMTP not enabled' }, error: null }
     } catch (error) {
       console.error('Error in inviteUser:', error)
@@ -941,49 +940,61 @@ export const invitationService = {
   },
   acceptInviteById: async (inviteId: string) => {
     const user = await authService.getCurrentUser()
-    if (!user) return { data: null, error: { message: 'User not authenticated' } }
+  resendInvite: async (groupId: string, email: string) => {
+    try {
+      const user = await authService.getCurrentUser()
+      if (!user) return { data: null, error: { message: 'User not authenticated' } }
 
-    // Fetch invitation by id to get token (RLS policy allows if invitee_email matches user's email)
-    const { data: invitation, error: fetchError } = await supabase
-      .from('invitations')
-      .select('id, token, invitee_email, status')
-      .eq('id', inviteId)
-      .single()
+      // Verify caller is group creator/admin
+      const { data: group, error: groupError } = await supabase
+        .from('groups')
+        .select('created_by')
+        .eq('id', groupId)
+        .single()
+      
+      if (groupError) return { data: null, error: groupError }
+      if (group.created_by !== user.id) return { data: null, error: { message: 'Only group creator can resend invitations' } }
 
-    if (fetchError) {
-      return { data: null, error: fetchError }
+      // Look up pending invite for this email
+      const { data: invites, error } = await supabase
+        .from('invitations')
+        .select('token, status')
+        .eq('group_id', groupId)
+        .eq('invitee_email', email.toLowerCase())
+        .order('created_at', { ascending: false })
+        .limit(1)
+
+      if (error) return { data: null, error }
+      const invite = invites?.[0]
+      if (!invite || invite.status !== 'pending') {
+        return { data: null, error: { message: 'No pending invitation found for this email' } }
+      }
+
+      const base = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.replace(/\/$/, '')
+        || (typeof window !== 'undefined' ? window.location.origin : '')
+        || ''
+      const inviteUrl = `${base}/#token=${encodeURIComponent(invite.token)}`
+      const title = `ChaiPaani invitation reminder`
+      const html = `
+        <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height:1.6;">
+          <h3>${title}</h3>
+          <p>This is a friendly reminder to join the group. Click below to accept:</p>
+          <p style="margin:20px 0;">
+            <a href="${inviteUrl}" style="background:#3b82f6;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;display:inline-block">Accept Invitation</a>
+          </p>
+          <p>Or open this link: <a href="${inviteUrl}">${inviteUrl}</a></p>
+        </div>
+      `
+      const { data, error: sendErr } = await supabase.functions.invoke('smtp-send', {
+        body: { to: email.toLowerCase(), subject: title, html }
+      })
+      if (sendErr) return { data: null, error: sendErr }
+      if (!data?.ok) return { data: null, error: { message: data?.error || 'Failed to send email' } as any }
+      return { data: { ok: true }, error: null }
+    } catch (error) {
+      return { data: null, error }
     }
-
-    if (!invitation) {
-      return { data: null, error: { message: 'Invitation not found' } }
-    }
-
-    // Verify the invitation is for the current user
-    if (invitation.invitee_email.toLowerCase() !== user.email?.toLowerCase()) {
-      return { data: null, error: { message: 'Invitation is not for this user' } }
-    }
-
-    if (invitation.status !== 'pending') {
-      return { data: null, error: { message: `Invitation is already ${invitation.status}` } }
-    }
-
-    // Accept using the token
-    return await invitationService.acceptByToken(invitation.token)
-  }
-}
-
-// Profiles join-safe helpers
-export const profileService = {
-  getCurrentProfile: async () => {
-    const user = await authService.getCurrentUser()
-    if (!user) return { data: null, error: { message: 'User not authenticated' } }
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, display_name, full_name, email, avatar_url')
-      .eq('id', user.id)
-      .single()
-    return { data, error }
-  },
+  },  },
   updateDisplayName: async (displayName: string) => {
     const user = await authService.getCurrentUser()
     if (!user) return { data: null, error: { message: 'User not authenticated' } }
