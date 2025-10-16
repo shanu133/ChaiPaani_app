@@ -14,10 +14,17 @@ import { authService, invitationService } from "./lib/supabase-service";
 type AppView = "landing" | "auth" | "dashboard" | "groups" | "group" | "notifications" | "activity" | "settings";
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<AppView>("landing");
+  const [currentView, setCurrentView] = useState<AppView>(() => {
+    // Restore last view from localStorage
+    const saved = localStorage.getItem("app_current_view");
+    return (saved as AppView) || "landing";
+  });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
+  const [currentGroupId, setCurrentGroupId] = useState<string | null>(() => {
+    // Restore last group ID from localStorage
+    return localStorage.getItem("app_current_group_id");
+  });
   const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(null);
 
   // Check for existing authentication on app load
@@ -53,7 +60,14 @@ export default function App() {
         const user = await authService.getCurrentUser();
         if (user) {
           setIsAuthenticated(true);
-          setCurrentView("dashboard");
+          // Keep the restored view from localStorage if valid, otherwise go to dashboard
+          if (!currentView || currentView === "landing" || currentView === "auth") {
+            setCurrentView("dashboard");
+          }
+          // If view was "group" but no group ID, go to dashboard
+          if (currentView === "group" && !currentGroupId) {
+            setCurrentView("dashboard");
+          }
         } else {
           setIsAuthenticated(false);
           setCurrentView("landing");
@@ -82,6 +96,22 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Persist currentView to localStorage whenever it changes
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      localStorage.setItem("app_current_view", currentView);
+    }
+  }, [currentView, isAuthenticated, isLoading]);
+
+  // Persist currentGroupId to localStorage whenever it changes
+  useEffect(() => {
+    if (currentGroupId) {
+      localStorage.setItem("app_current_group_id", currentGroupId);
+    } else {
+      localStorage.removeItem("app_current_group_id");
+    }
+  }, [currentGroupId]);
 
   // When authenticated and we have a pending invite token, accept it once
   useEffect(() => {
@@ -120,6 +150,10 @@ export default function App() {
     await authService.signOut();
     setIsAuthenticated(false);
     setCurrentView("landing");
+    setCurrentGroupId(null);
+    // Clear saved state on logout
+    localStorage.removeItem("app_current_view");
+    localStorage.removeItem("app_current_group_id");
   };
 
   const handleBackToLanding = () => {

@@ -395,7 +395,15 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                       <p className="font-medium">Email Delivery (SMTP)</p>
                       <p className="text-sm text-muted-foreground">Configure SMTP to send invitations and updates.</p>
                     </div>
-                    <Button variant="outline" onClick={() => setSmtpOpen(true)}>Configure</Button>
+                    <Button 
+                      variant="outline" 
+                      onClick={() => {
+                        console.log("SMTP Configure button clicked, opening modal...");
+                        setSmtpOpen(true);
+                      }}
+                    >
+                      Configure SMTP
+                    </Button>
                   </div>
                 </div>
 

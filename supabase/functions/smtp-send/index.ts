@@ -54,6 +54,9 @@ Deno.serve(async (req) => {
     const fromName = Deno.env.get("SMTP_FROM_NAME") ?? "ChaiPaani";
     const secure = boolEnv("SMTP_SECURE", port === 465);
 
+    // Debug logging
+    console.log("SMTP Config:", { host, port, user: user ? "set" : "missing", pass: pass ? `set (${pass.length} chars)` : "missing", fromEmail, fromName, secure });
+
     if (!host || !user || !pass) {
       return new Response(JSON.stringify({ ok: false, error: "SMTP env not configured" }), {
         status: 500,
@@ -71,6 +74,7 @@ Deno.serve(async (req) => {
     });
 
     try {
+      console.log("Attempting to send email to:", to);
       await client.send({
         from: `${fromName} <${fromEmail}>`,
         to,
@@ -79,19 +83,24 @@ Deno.serve(async (req) => {
         html,
       });
       await client.close();
+      console.log("Email sent successfully!");
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
-    } catch (e) {
+    } catch (e: unknown) {
+      console.error("SMTP send error:", e);
       try { await client.close(); } catch {}
-      return new Response(JSON.stringify({ ok: false, error: e?.message || String(e) }), {
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      return new Response(JSON.stringify({ ok: false, error: errorMsg }), {
         status: 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
-  } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: e?.message || "Internal error" }), {
+  } catch (e: unknown) {
+    console.error("Function error:", e);
+    const errorMsg = e instanceof Error ? e.message : "Internal error";
+    return new Response(JSON.stringify({ ok: false, error: errorMsg }), {
       status: 500,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });

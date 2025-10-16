@@ -66,6 +66,8 @@ function saveLocal(cfg: Partial<SmtpConfig>) {
 }
 
 export function SmtpSettingsModal({ open, onOpenChange }: SmtpSettingsModalProps) {
+  console.log("SmtpSettingsModal rendered, open:", open);
+  
   const [cfg, setCfg] = useState<SmtpConfig>(
     () =>
       loadLocal() || {
