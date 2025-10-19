@@ -664,16 +664,17 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                       <p className="font-medium">Import Data</p>
                       <p className="text-sm text-muted-foreground">Import data from other expense tracking apps</p>
                     </div>
-                    <Button variant="outline">
-                      <Upload className="w-4 h-4 mr-2" />
-                      Import
                     <Button 
                       variant="outline"
                       onClick={() => toast.success("Data import feature coming soon!")}
                     >
                       <Upload className="w-4 h-4 mr-2" />
                       Import
-                    </Button>                <Separator />
+                    </Button>
+                  </div>
+                </div>
+                
+                <Separator />
                 
                 <div className="space-y-4">
                   <h3 className="font-medium text-destructive">Danger Zone</h3>
