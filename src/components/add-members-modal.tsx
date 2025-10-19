@@ -111,7 +111,8 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
       toast.error("Failed to add member. Please try again.");
     } finally {
       setIsLoading(false);
-    }  };
+    }
+  };
 
   const handleClose = () => {
     if (!isLoading) {
