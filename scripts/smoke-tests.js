@@ -1,8 +1,8 @@
 'use strict'
 
 // Simple smoke tests for happy paths: invites, balances, settle-up.
-// Usage: set SUPABASE_URL, SUPABASE_ANON_KEY, and TEST_USER_EMAIL/PASSWORD,
-// TEST_INVITEE_EMAIL (secondary account), and TEST_GROUP_NAME in environment.
+// Usage: set SUPABASE_URL, SUPABASE_ANON_KEY, TEST_USER_EMAIL/PASSWORD,
+// TEST_INVITEE_EMAIL, TEST_INVITEE_PASSWORD (secondary account), and TEST_GROUP_NAME in environment.
 // Then run via npm script: npm run test:smoke
 
 const { createClient } = require('@supabase/supabase-js')
@@ -27,10 +27,11 @@ async function run() {
   const primaryEmail = process.env.TEST_USER_EMAIL
   const primaryPassword = process.env.TEST_USER_PASSWORD
   const inviteeEmail = process.env.TEST_INVITEE_EMAIL
+  const inviteePassword = process.env.TEST_INVITEE_PASSWORD
   const groupName = process.env.TEST_GROUP_NAME || 'Smoke Test Group'
 
-  if (!primaryEmail || !primaryPassword || !inviteeEmail) {
-    console.error('Missing TEST_USER_EMAIL, TEST_USER_PASSWORD, or TEST_INVITEE_EMAIL')
+  if (!primaryEmail || !primaryPassword || !inviteeEmail || !inviteePassword) {
+    console.error('Missing TEST_USER_EMAIL, TEST_USER_PASSWORD, TEST_INVITEE_EMAIL, or TEST_INVITEE_PASSWORD')
     process.exit(1)
   }
 
@@ -66,16 +67,46 @@ async function run() {
     .single()
   if (invErr) throw invErr
 
-  // 3) Simulate accept via RPC directly (no email)
-  console.log('Accepting invite via RPC...')
+  // 3) Sign in as invitee and accept invitation
+  // This tests the real invitee acceptance flow and ensures RLS policies are correct
+  console.log('Signing out primary user...')
+  await supabase.auth.signOut()
+  
+  console.log('Signing in as invitee:', inviteeEmail)
+  await signIn(inviteeEmail, inviteePassword)
+  
+  // Get invitee's authenticated session
+  const { data: inviteeUserData, error: inviteeUserError } = await supabase.auth.getUser()
+  if (inviteeUserError || !inviteeUserData?.user) {
+    throw new Error('Failed to authenticate as invitee: ' + (inviteeUserError?.message || 'User not found'))
+  }
+  const inviteeUser = inviteeUserData.user
+  console.log('Invitee authenticated as:', inviteeUser.email)
+  
+  console.log('Accepting invite via RPC (as invitee)...')
   const { error: acceptErr } = await supabase.rpc('accept_group_invitation', { p_token: invite.token })
   if (acceptErr) throw acceptErr
+  console.log('✅ Invitation accepted successfully by invitee')
+  
+  // Sign back in as primary user for remaining tests
+  console.log('Signing out invitee...')
+  await supabase.auth.signOut()
+  
+  console.log('Signing back in as primary user...')
+  await signIn(primaryEmail, primaryPassword)
+  
+  // Re-fetch primary user session
+  const { data: primaryUserData, error: primaryUserError } = await supabase.auth.getUser()
+  if (primaryUserError || !primaryUserData?.user) {
+    throw new Error('Failed to re-authenticate as primary user: ' + (primaryUserError?.message || 'User not found'))
+  }
+  const primaryUser = primaryUserData.user
 
-  // 4) Add an expense and splits
+  // 4) Add an expense and splits (as primary user)
   console.log('Adding expense and splits...')
   const { data: exp, error: expErr } = await supabase
     .from('expenses')
-    .insert({ group_id: group.id, payer_id: user.id, description: 'Dinner', amount: 1000, category: 'food' })
+    .insert({ group_id: group.id, payer_id: primaryUser.id, description: 'Dinner', amount: 1000, category: 'food' })
     .select('*')
     .single()
   if (expErr) throw expErr
@@ -97,7 +128,7 @@ async function run() {
   const { error: splitErr } = await supabase
     .from('expense_splits')
     .insert([
-      { expense_id: exp.id, user_id: user.id, amount: 500 },
+      { expense_id: exp.id, user_id: primaryUser.id, amount: 500 },
       { expense_id: exp.id, user_id: inviteeProfile.id, amount: 500 },
     ])
   if (splitErr) throw splitErr
