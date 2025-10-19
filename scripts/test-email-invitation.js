@@ -34,6 +34,32 @@ function withTimeout(promise, timeoutMs = 30000, operationName = 'operation') {
   ]);
 }
 
+/**
+ * Sanitizes sensitive data for logging
+ * @param {string} value - The value to sanitize
+ * @param {number} showChars - Number of characters to show (default 4)
+ * @returns {string} Sanitized value
+ */
+function sanitize(value, showChars = 4) {
+  if (!value || typeof value !== 'string') return '[redacted]';
+  if (value.length <= showChars) return '***';
+  return value.substring(0, showChars) + '...';
+}
+
+/**
+ * Sanitizes an email address for logging
+ * @param {string} email - The email to sanitize
+ * @returns {string} Sanitized email
+ */
+function sanitizeEmail(email) {
+  if (!email || typeof email !== 'string') return '[redacted]';
+  const parts = email.split('@');
+  if (parts.length !== 2) return sanitize(email, 3);
+  const localPart = parts[0].length > 3 ? parts[0].substring(0, 3) + '***' : '***';
+  const domain = parts[1];
+  return `${localPart}@${domain}`;
+}
+
 async function testEmailInvitationFlow() {
   console.log('\n🔍 Starting Email Invitation Flow Test\n');
   console.log('=' .repeat(60));
@@ -71,8 +97,8 @@ async function testEmailInvitationFlow() {
       process.exit(1);
     }
     
-    console.log('✅ Authenticated as:', user.email);
-    console.log('   User ID:', user.id);
+    console.log('✅ Authenticated as:', sanitizeEmail(user.email));
+    console.log('   User ID:', sanitize(user.id, 8));
     
     // Step 2: Check for existing groups
     console.log('\n📋 Step 2: Fetching user groups...');
@@ -117,7 +143,7 @@ async function testEmailInvitationFlow() {
     }
     
     console.log('✅ Found group:', testGroup.name);
-    console.log('   Group ID:', testGroup.id);
+    console.log('   Group ID:', sanitize(testGroup.id, 8));
     
     // Step 3: Check SMTP configuration
     console.log('\n📋 Step 3: Checking SMTP Edge Function...');
@@ -144,7 +170,7 @@ async function testEmailInvitationFlow() {
         });
       } else if (testSmtpResult?.data?.ok) {
         console.log('✅ SMTP function is working!');
-        console.log('   📧 Test email sent to:', TEST_EMAIL);
+        console.log('   📧 Test email sent to:', sanitizeEmail(TEST_EMAIL));
         console.log('   ⚠️  Check spam folder if not received in inbox');
       } else {
         console.log('⚠️  SMTP function returned:', testSmtpResult?.data ?? 'null/undefined');
@@ -181,9 +207,9 @@ async function testEmailInvitationFlow() {
         console.log(`✅ Found ${existingInvites?.length ?? 0} existing invitations:`);
         if (existingInvites && Array.isArray(existingInvites)) {
           existingInvites.forEach((inv, idx) => {
-            console.log(`   ${idx + 1}. ${inv?.invitee_email ?? 'unknown'} - ${inv?.status ?? 'unknown'} (${inv?.created_at ? new Date(inv.created_at).toLocaleString() : 'unknown'})`);
+            console.log(`   ${idx + 1}. ${sanitizeEmail(inv?.invitee_email ?? 'unknown')} - ${inv?.status ?? 'unknown'} (${inv?.created_at ? new Date(inv.created_at).toLocaleString() : 'unknown'})`);
             if (inv?.token) {
-              console.log(`      Token: ${inv.token.substring(0, 20)}...`);
+              console.log(`      Token: ${sanitize(inv.token, 8)}`);
             }
           });
         }
@@ -197,7 +223,7 @@ async function testEmailInvitationFlow() {
     
     // Step 5: Test creating a new invitation
     console.log('\n📋 Step 5: Testing invitation creation...');
-    console.log('   Target email:', TEST_EMAIL);
+    console.log('   Target email:', sanitizeEmail(TEST_EMAIL));
     
     let newInvite;
     try {
@@ -229,8 +255,8 @@ async function testEmailInvitationFlow() {
           console.error('❌ Invalid invitation data received:', newInvite);
         } else {
           console.log('✅ Invitation created successfully!');
-          console.log('   Invitation ID:', newInvite.id);
-          console.log('   Token:', newInvite.token.substring(0, 20) + '...');
+          console.log('   Invitation ID:', sanitize(newInvite.id, 8));
+          console.log('   Token:', sanitize(newInvite.token, 8));
           console.log('   Status:', newInvite.status ?? 'unknown');
         }
       }
@@ -247,8 +273,10 @@ async function testEmailInvitationFlow() {
       const appUrl = process.env.VITE_PUBLIC_APP_URL || 'http://localhost:5173';
       const inviteUrl = `${appUrl}/#token=${encodeURIComponent(newInvite.token)}`;
       
-      console.log('   📧 Invitation URL:', inviteUrl);
-      console.log('   📧 Email would be sent to:', TEST_EMAIL);
+      // Sanitize URL for logging (redact token parameter)
+      const sanitizedUrl = inviteUrl.replace(/token=[^&]+/, `token=${sanitize(newInvite.token, 8)}`);
+      console.log('   📧 Invitation URL:', sanitizedUrl);
+      console.log('   📧 Email would be sent to:', sanitizeEmail(TEST_EMAIL));
       
       const emailHtml = `
         <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height:1.6;">
@@ -280,7 +308,12 @@ async function testEmailInvitationFlow() {
           'Send invitation email'
         );
         
-        console.log('\n   📤 Email send result:', JSON.stringify(emailResult, null, 2));
+        // Sanitize result before logging (remove any sensitive data)
+        const sanitizedResult = {
+          data: emailResult?.data ? { ok: emailResult.data.ok } : null,
+          error: emailResult?.error ? 'Error occurred (see details below)' : null
+        };
+        console.log('\n   📤 Email send result:', JSON.stringify(sanitizedResult, null, 2));
         
         if (emailResult?.error) {
           console.error('   ❌ Email send error:', {
@@ -289,7 +322,7 @@ async function testEmailInvitationFlow() {
           });
         } else if (emailResult?.data?.ok) {
           console.log('   ✅ Email sent successfully!');
-          console.log('   📧 Check', TEST_EMAIL, 'inbox (and spam folder)');
+          console.log('   📧 Check', sanitizeEmail(TEST_EMAIL), 'inbox (and spam folder)');
         } else {
           console.log('   ⚠️  Unexpected response:', emailResult?.data ?? 'null/undefined');
         }
@@ -306,10 +339,10 @@ async function testEmailInvitationFlow() {
     // Step 7: Environment check
     console.log('\n📋 Step 7: Environment Variables Check');
     console.log('   VITE_SUPABASE_URL:', SUPABASE_URL ? '✅ Set' : '❌ Not set');
-    console.log('   VITE_SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? '✅ Set' : '❌ Not set');
+    console.log('   VITE_SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? `✅ Set (${sanitize(SUPABASE_ANON_KEY, 8)})` : '❌ Not set');
     console.log('   VITE_PUBLIC_APP_URL:', process.env.VITE_PUBLIC_APP_URL || '❌ Not set (using default)');
     console.log('   VITE_ENABLE_SMTP:', process.env.VITE_ENABLE_SMTP || '❌ Not set');
-    console.log('   TEST_EMAIL:', TEST_EMAIL);
+    console.log('   TEST_EMAIL:', sanitizeEmail(TEST_EMAIL));
     
     console.log('\n' + '='.repeat(60));
     console.log('✅ Test completed!\n');
