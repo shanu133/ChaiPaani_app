@@ -463,10 +463,10 @@ export const expenseService = {
       .select()
 
     if (splitsError) {
-      // If splits fail, we should probably delete the expense, but for now just return error
+      // Cleanup orphaned expense
+      await supabase.from('expenses').delete().eq('id', expense.id)
       return { data: null, error: splitsError }
     }
-
     return { data: expense, error: null }
   },
 
@@ -863,6 +863,13 @@ export const invitationService = {
   },
   resendInvite: async (groupId: string, email: string) => {
     try {
+      // Check if SMTP is enabled before attempting to resend
+      const enableSmtp = (import.meta as any).env?.VITE_ENABLE_SMTP === 'true'
+      if (!enableSmtp) {
+        console.warn('⚠️ SMTP not enabled - cannot resend invitation email')
+        return { data: null, error: { message: 'SMTP not enabled' } }
+      }
+
       // Look up pending invite for this email
       const { data: invites, error } = await supabase
         .from('invitations')
