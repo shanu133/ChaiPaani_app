@@ -105,10 +105,8 @@ export const authService = {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || (() => {
-          if (typeof window !== 'undefined') return window.location.origin
-          throw new Error('VITE_SUPABASE_REDIRECT_URL must be configured')
-        })()      }
+        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL
+      }
     })
     return { data, error }
   },
