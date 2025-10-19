@@ -5,11 +5,34 @@
 
 const { createClient } = require('@supabase/supabase-js');
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'YOUR_SUPABASE_URL';
-const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || 'YOUR_ANON_KEY';
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const TEST_EMAIL = process.env.TEST_EMAIL || 'test@example.com';
 
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error('❌ Missing required environment variables:');
+  if (!SUPABASE_URL) console.error('   - VITE_SUPABASE_URL');
+  if (!SUPABASE_ANON_KEY) console.error('   - VITE_SUPABASE_ANON_KEY');
+  process.exit(1);
+}
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/**
+ * Wraps a promise with a timeout to prevent hanging operations
+ * @param {Promise} promise - The promise to wrap
+ * @param {number} timeoutMs - Timeout in milliseconds (default 30000)
+ * @param {string} operationName - Name of the operation for error messages
+ * @returns {Promise} The wrapped promise
+ */
+function withTimeout(promise, timeoutMs = 30000, operationName = 'operation') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${operationName} timed out after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+}
 
 async function testEmailInvitationFlow() {
   console.log('\n🔍 Starting Email Invitation Flow Test\n');
@@ -18,82 +41,157 @@ async function testEmailInvitationFlow() {
   try {
     // Step 1: Check authentication
     console.log('\n📋 Step 1: Checking authentication...');
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      console.error('❌ Not authenticated. Please log in first.');
-      console.log('   Run this script after logging into the app.');
-      return;
+    let user;
+    try {
+      const { data, error: authError } = await withTimeout(
+        supabase.auth.getUser(),
+        30000,
+        'Authentication check'
+      );
+      
+      if (authError) {
+        console.error('❌ Authentication error:', {
+          message: authError.message,
+          stack: authError.stack
+        });
+        process.exit(1);
+      }
+      
+      user = data?.user;
+      if (!user) {
+        console.error('❌ Not authenticated. Please log in first.');
+        console.log('   Run this script after logging into the app.');
+        process.exit(1);
+      }
+    } catch (authException) {
+      console.error('❌ Authentication exception:', {
+        message: authException.message,
+        stack: authException.stack
+      });
+      process.exit(1);
     }
+    
     console.log('✅ Authenticated as:', user.email);
     console.log('   User ID:', user.id);
     
     // Step 2: Check for existing groups
     console.log('\n📋 Step 2: Fetching user groups...');
-    const { data: groups, error: groupsError } = await supabase
-      .from('groups')
-      .select('id, name, created_by')
-      .eq('created_by', user.id)
-      .limit(1);
+    let testGroup;
+    try {
+      const { data: groups, error: groupsError } = await withTimeout(
+        supabase
+          .from('groups')
+          .select('id, name, created_by')
+          .eq('created_by', user.id)
+          .limit(1),
+        30000,
+        'Fetch user groups'
+      );
       
-    if (groupsError) {
-      console.error('❌ Error fetching groups:', groupsError);
-      return;
+      if (groupsError) {
+        console.error('❌ Error fetching groups:', {
+          message: groupsError.message,
+          details: groupsError.details,
+          hint: groupsError.hint,
+          code: groupsError.code
+        });
+        process.exit(1);
+      }
+      
+      if (!groups || groups.length === 0) {
+        console.log('❌ No groups found. Please create a group first.');
+        process.exit(1);
+      }
+      
+      testGroup = groups[0];
+      if (!testGroup?.id || !testGroup?.name) {
+        console.error('❌ Invalid group data received:', testGroup);
+        process.exit(1);
+      }
+    } catch (groupsException) {
+      console.error('❌ Groups fetch exception:', {
+        message: groupsException.message,
+        stack: groupsException.stack
+      });
+      process.exit(1);
     }
     
-    if (!groups || groups.length === 0) {
-      console.log('❌ No groups found. Please create a group first.');
-      return;
-    }
-    
-    const testGroup = groups[0];
     console.log('✅ Found group:', testGroup.name);
     console.log('   Group ID:', testGroup.id);
     
     // Step 3: Check SMTP configuration
     console.log('\n📋 Step 3: Checking SMTP Edge Function...');
     try {
-      const testSmtpResult = await supabase.functions.invoke('smtp-send', {
-        body: {
-          to: TEST_EMAIL,
-          subject: 'ChaiPaani SMTP Test',
-          html: '<p>This is a test email from ChaiPaani SMTP configuration test.</p>',
-          text: 'This is a test email from ChaiPaani SMTP configuration test.'
-        }
-      });
+      const testSmtpResult = await withTimeout(
+        supabase.functions.invoke('smtp-send', {
+          body: {
+            to: TEST_EMAIL,
+            subject: 'ChaiPaani SMTP Test',
+            html: '<p>This is a test email from ChaiPaani SMTP configuration test.</p>',
+            text: 'This is a test email from ChaiPaani SMTP configuration test.'
+          }
+        }),
+        30000,
+        'SMTP test email'
+      );
       
       console.log('   SMTP Function Response:', JSON.stringify(testSmtpResult, null, 2));
       
-      if (testSmtpResult.error) {
-        console.error('❌ SMTP function error:', testSmtpResult.error);
-      } else if (testSmtpResult.data?.ok) {
+      if (testSmtpResult?.error) {
+        console.error('❌ SMTP function error:', {
+          message: testSmtpResult.error.message ?? testSmtpResult.error,
+          stack: testSmtpResult.error.stack
+        });
+      } else if (testSmtpResult?.data?.ok) {
         console.log('✅ SMTP function is working!');
         console.log('   📧 Test email sent to:', TEST_EMAIL);
         console.log('   ⚠️  Check spam folder if not received in inbox');
       } else {
-        console.log('⚠️  SMTP function returned:', testSmtpResult.data);
+        console.log('⚠️  SMTP function returned:', testSmtpResult?.data ?? 'null/undefined');
       }
     } catch (smtpError) {
-      console.error('❌ SMTP function exception:', smtpError);
+      console.error('❌ SMTP function exception:', {
+        message: smtpError.message,
+        stack: smtpError.stack
+      });
     }
     
     // Step 4: Check existing invitations
     console.log('\n📋 Step 4: Checking existing invitations...');
-    const { data: existingInvites, error: invitesError } = await supabase
-      .from('invitations')
-      .select('id, invitee_email, status, created_at, token')
-      .eq('group_id', testGroup.id)
-      .order('created_at', { ascending: false })
-      .limit(5);
+    try {
+      const { data: existingInvites, error: invitesError } = await withTimeout(
+        supabase
+          .from('invitations')
+          .select('id, invitee_email, status, created_at, token')
+          .eq('group_id', testGroup.id)
+          .order('created_at', { ascending: false })
+          .limit(5),
+        30000,
+        'Fetch existing invitations'
+      );
       
-    if (invitesError) {
-      console.error('❌ Error fetching invitations:', invitesError);
-    } else {
-      console.log(`✅ Found ${existingInvites?.length || 0} existing invitations:`);
-      existingInvites?.forEach((inv, idx) => {
-        console.log(`   ${idx + 1}. ${inv.invitee_email} - ${inv.status} (${new Date(inv.created_at).toLocaleString()})`);
-        if (inv.token) {
-          console.log(`      Token: ${inv.token.substring(0, 20)}...`);
+      if (invitesError) {
+        console.error('❌ Error fetching invitations:', {
+          message: invitesError.message,
+          details: invitesError.details,
+          hint: invitesError.hint,
+          code: invitesError.code
+        });
+      } else {
+        console.log(`✅ Found ${existingInvites?.length ?? 0} existing invitations:`);
+        if (existingInvites && Array.isArray(existingInvites)) {
+          existingInvites.forEach((inv, idx) => {
+            console.log(`   ${idx + 1}. ${inv?.invitee_email ?? 'unknown'} - ${inv?.status ?? 'unknown'} (${inv?.created_at ? new Date(inv.created_at).toLocaleString() : 'unknown'})`);
+            if (inv?.token) {
+              console.log(`      Token: ${inv.token.substring(0, 20)}...`);
+            }
+          });
         }
+      }
+    } catch (invitesException) {
+      console.error('❌ Invitations fetch exception:', {
+        message: invitesException.message,
+        stack: invitesException.stack
       });
     }
     
@@ -101,26 +199,50 @@ async function testEmailInvitationFlow() {
     console.log('\n📋 Step 5: Testing invitation creation...');
     console.log('   Target email:', TEST_EMAIL);
     
-    const { data: newInvite, error: createError } = await supabase
-      .from('invitations')
-      .insert({
-        group_id: testGroup.id,
-        inviter_id: user.id,
-        invitee_email: TEST_EMAIL.toLowerCase()
-      })
-      .select()
-      .single();
+    let newInvite;
+    try {
+      const { data, error: createError } = await withTimeout(
+        supabase
+          .from('invitations')
+          .insert({
+            group_id: testGroup.id,
+            inviter_id: user.id,
+            invitee_email: TEST_EMAIL.toLowerCase()
+          })
+          .select()
+          .single(),
+        30000,
+        'Create invitation'
+      );
       
-    if (createError) {
-      console.error('❌ Failed to create invitation:', createError);
-      console.log('   This might be expected if invitation already exists.');
-    } else {
-      console.log('✅ Invitation created successfully!');
-      console.log('   Invitation ID:', newInvite.id);
-      console.log('   Token:', newInvite.token?.substring(0, 20) + '...');
-      console.log('   Status:', newInvite.status);
-      
-      // Step 6: Simulate email sending
+      if (createError) {
+        console.error('❌ Failed to create invitation:', {
+          message: createError.message,
+          details: createError.details,
+          hint: createError.hint,
+          code: createError.code
+        });
+        console.log('   This might be expected if invitation already exists.');
+      } else {
+        newInvite = data;
+        if (!newInvite?.id || !newInvite?.token) {
+          console.error('❌ Invalid invitation data received:', newInvite);
+        } else {
+          console.log('✅ Invitation created successfully!');
+          console.log('   Invitation ID:', newInvite.id);
+          console.log('   Token:', newInvite.token.substring(0, 20) + '...');
+          console.log('   Status:', newInvite.status ?? 'unknown');
+        }
+      }
+    } catch (createException) {
+      console.error('❌ Invitation creation exception:', {
+        message: createException.message,
+        stack: createException.stack
+      });
+    }
+    
+    // Step 6: Simulate email sending
+    if (newInvite?.token && newInvite?.id) {
       console.log('\n📋 Step 6: Simulating email send...');
       const appUrl = process.env.VITE_PUBLIC_APP_URL || 'http://localhost:5173';
       const inviteUrl = `${appUrl}/#token=${encodeURIComponent(newInvite.token)}`;
@@ -130,9 +252,9 @@ async function testEmailInvitationFlow() {
       
       const emailHtml = `
         <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height:1.6;">
-          <h2>You're invited to join ${testGroup.name} on ChaiPaani</h2>
+          <h2>You're invited to join ${testGroup?.name ?? 'a group'} on ChaiPaani</h2>
           <p>Hello,</p>
-          <p>You have been invited to join <strong>${testGroup.name}</strong> on ChaiPaani.</p>
+          <p>You have been invited to join <strong>${testGroup?.name ?? 'a group'}</strong> on ChaiPaani.</p>
           <p>Click the button below to accept your invitation and get started:</p>
           <p style="margin:20px 0;">
             <a href="${inviteUrl}" style="background:#3b82f6;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;display:inline-block">Accept Invitation</a>
@@ -146,27 +268,39 @@ async function testEmailInvitationFlow() {
       
       // Try to send the actual email
       try {
-        const emailResult = await supabase.functions.invoke('smtp-send', {
-          body: {
-            to: TEST_EMAIL,
-            subject: `You're invited to join ${testGroup.name} on ChaiPaani`,
-            html: emailHtml
-          }
-        });
+        const emailResult = await withTimeout(
+          supabase.functions.invoke('smtp-send', {
+            body: {
+              to: TEST_EMAIL,
+              subject: `You're invited to join ${testGroup?.name ?? 'a group'} on ChaiPaani`,
+              html: emailHtml
+            }
+          }),
+          30000,
+          'Send invitation email'
+        );
         
         console.log('\n   📤 Email send result:', JSON.stringify(emailResult, null, 2));
         
-        if (emailResult.error) {
-          console.error('   ❌ Email send error:', emailResult.error);
-        } else if (emailResult.data?.ok) {
+        if (emailResult?.error) {
+          console.error('   ❌ Email send error:', {
+            message: emailResult.error.message ?? emailResult.error,
+            stack: emailResult.error.stack
+          });
+        } else if (emailResult?.data?.ok) {
           console.log('   ✅ Email sent successfully!');
           console.log('   📧 Check', TEST_EMAIL, 'inbox (and spam folder)');
         } else {
-          console.log('   ⚠️  Unexpected response:', emailResult.data);
+          console.log('   ⚠️  Unexpected response:', emailResult?.data ?? 'null/undefined');
         }
       } catch (emailError) {
-        console.error('   ❌ Email exception:', emailError);
+        console.error('   ❌ Email exception:', {
+          message: emailError.message,
+          stack: emailError.stack
+        });
       }
+    } else {
+      console.log('\n⚠️  Skipping Step 6: No valid invitation to send email for');
     }
     
     // Step 7: Environment check
