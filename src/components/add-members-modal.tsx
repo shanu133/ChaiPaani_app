@@ -74,10 +74,11 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
     try {
       if (!group?.id) {
-        console.error("Group ID is missing");
-        setIsLoading(false);
-        return;
-      }
+        if (!group?.id) {
+          console.error("Group ID is missing");
+          alert("Group ID is missing. Please try again.");
+          return;
+        }      }
       // Invite the user to the group
       const { data: inviteData, error: inviteError } = await invitationService.inviteUser(
         group.id,
@@ -104,13 +105,38 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
       setNewMemberEmail("");
   onMembersAdded();
   // Update local pending list
-  setPendingInvites(prev => [{ id: crypto.randomUUID?.() || String(Date.now()), email: newMemberEmail.trim().toLowerCase(), created_at: new Date().toISOString(), token: inviteData.token }, ...prev])
-
+  if (inviteData.id) {
+    setPendingInvites(prev => [
+      { 
+        id: inviteData.id, 
+        email: newMemberEmail.trim().toLowerCase(), 
+        created_at: new Date().toISOString(), 
+        token: inviteData.token 
+      }, 
+      ...prev
+    ]);
+  }
     } catch (error) {
       console.error("Error in addMember:", error);
       toast.error("Failed to add member. Please try again.");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleResendInvite = async (email: string) => {
+    if (!group?.id) return;
+    
+    try {
+      const { error } = await invitationService.resendInvite(group.id, email);
+      if (error) {
+        const errorMessage = (error as any)?.message || 'Unknown error';
+        toast.error(`Failed to resend invitation: ${errorMessage}`);
+        return;
+      }
+      toast.success('Invitation email resent');
+    } catch (e) {
+      toast.error('Failed to resend email');
     }
   };
 
@@ -183,19 +209,7 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={async () => {
-                    if (!group?.id || !lastInviteEmail) return;
-                    try {
-                      const { error } = await invitationService.resendInvite(group.id, lastInviteEmail);
-                      if (error) {
-                        toast.error(`Failed to resend email: ${(error as any)?.message || 'Unknown error'}`);
-                        return;
-                      }
-                      toast.success('Invitation email resent');
-                    } catch (e) {
-                      toast.error('Failed to resend email');
-                    }
-                  }}
+                  onClick={() => lastInviteEmail && handleResendInvite(lastInviteEmail)}
                 >
                   <RefreshCw className="w-4 h-4 mr-2" /> Resend
                 </Button>
@@ -222,19 +236,7 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={async () => {
-                          if (!group?.id) return;
-                          try {
-                            const { error } = await invitationService.resendInvite(group.id, inv.email);
-                            if (error) {
-                              toast.error(`Failed to resend: ${(error as any)?.message || 'Unknown error'}`);
-                              return;
-                            }
-                            toast.success('Invitation email resent');
-                          } catch (e) {
-                            toast.error('Failed to resend email');
-                          }
-                        }}
+                        onClick={() => handleResendInvite(inv.email)}
                       >
                         <Mail className="w-4 h-4 mr-2" /> Resend
                       </Button>
