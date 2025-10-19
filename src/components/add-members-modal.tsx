@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { Button } from "./ui/button";import { Input } from "./ui/input";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import { Plus, Users, RefreshCw, Mail } from "lucide-react";
 import { invitationService } from "../lib/supabase-service";
+import { toast } from "sonner";
 
 // Copy-link was removed; invites are email-based.
 
@@ -54,18 +56,18 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
   const addMember = async () => {
     if (!newMemberName.trim()) {
-      alert("Please enter member name");
+      toast.error("Please enter member name");
       return;
     }
 
     if (!newMemberEmail.trim()) {
-      alert("Please enter member email");
+      toast.error("Please enter member email");
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(newMemberEmail)) {
-      alert("Please enter a valid email address");
+      toast.error("Please enter a valid email address");
       return;
     }
     setIsLoading(true);
@@ -84,19 +86,19 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
       if (inviteError) {
         console.error(`Error inviting ${newMemberEmail}:`, inviteError);
-        alert(`Failed to invite ${newMemberEmail}: ${(inviteError as any)?.message || 'Unknown error'}`);
+        toast.error(`Failed to invite ${newMemberEmail}: ${(inviteError as any)?.message || 'Unknown error'}`);
         return;
       }
 
       if (!inviteData?.ok) {
         console.error(`Invitation failed for ${newMemberEmail}:`, inviteData);
-        alert(`Failed to invite ${newMemberEmail}: Invitation creation failed`);
+        toast.error(`Failed to invite ${newMemberEmail}: Invitation creation failed`);
         return;
       }
 
   setLastInviteEmail(newMemberEmail.trim().toLowerCase());
   console.log(`Invitation sent to ${newMemberEmail}!`);
-  alert(`Invitation email sent to ${newMemberEmail}`);
+  toast.success(`Invitation email sent to ${newMemberEmail}`);
 
       setNewMemberName("");
       setNewMemberEmail("");
@@ -106,7 +108,7 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
     } catch (error) {
       console.error("Error in addMember:", error);
-      alert("Failed to add member. Please try again.");
+      toast.error("Failed to add member. Please try again.");
     } finally {
       setIsLoading(false);
     }  };
@@ -185,12 +187,12 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
                     try {
                       const { error } = await invitationService.resendInvite(group.id, lastInviteEmail);
                       if (error) {
-                        alert(`Failed to resend email: ${(error as any)?.message || 'Unknown error'}`);
+                        toast.error(`Failed to resend email: ${(error as any)?.message || 'Unknown error'}`);
                         return;
                       }
-                      alert('Invitation email resent');
+                      toast.success('Invitation email resent');
                     } catch (e) {
-                      alert('Failed to resend email');
+                      toast.error('Failed to resend email');
                     }
                   }}
                 >
@@ -224,12 +226,12 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
                           try {
                             const { error } = await invitationService.resendInvite(group.id, inv.email);
                             if (error) {
-                              alert(`Failed to resend: ${(error as any)?.message || 'Unknown error'}`);
+                              toast.error(`Failed to resend: ${(error as any)?.message || 'Unknown error'}`);
                               return;
                             }
-                            alert('Invitation email resent');
+                            toast.success('Invitation email resent');
                           } catch (e) {
-                            alert('Failed to resend email');
+                            toast.error('Failed to resend email');
                           }
                         }}
                       >
