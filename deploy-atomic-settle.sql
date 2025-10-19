@@ -29,6 +29,11 @@ BEGIN
     RAISE EXCEPTION 'Settlement amount must be positive';
   END IF;
 
+  -- Prevent self-settlement
+  IF p_from_user = p_to_user THEN
+    RAISE EXCEPTION 'Cannot settle debt to self';
+  END IF;
+
   IF v_current_user_id != p_from_user AND v_current_user_id != p_to_user THEN
     RAISE EXCEPTION 'User not authorized to settle this debt';
   END IF;
