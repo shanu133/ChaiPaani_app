@@ -75,6 +75,7 @@ BEGIN
     EXIT WHEN v_remaining_amount <= 0;
 
     IF v_remaining_amount >= v_split_record.amount THEN
+      -- Full settlement of this split
       UPDATE expense_splits
       SET 
         is_settled = true,
@@ -91,6 +92,52 @@ BEGIN
         v_total_settled := v_total_settled + v_split_record.amount;
       END IF;
     ELSE
+      -- Partial settlement: split the expense_split into settled and unsettled portions
+      DECLARE
+        v_new_split_id UUID;
+        v_settled_portion DECIMAL(10,2);
+        v_unsettled_portion DECIMAL(10,2);
+      BEGIN
+        v_settled_portion := v_remaining_amount;
+        v_unsettled_portion := v_split_record.amount - v_remaining_amount;
+        
+        -- Create a new split for the unsettled portion
+        INSERT INTO expense_splits (
+          expense_id,
+          user_id,
+          amount,
+          is_settled,
+          created_at
+        )
+        VALUES (
+          v_split_record.expense_id,
+          p_from_user,
+          v_unsettled_portion,
+          false,
+          NOW()
+        )
+        RETURNING id INTO v_new_split_id;
+        
+        -- Update the original split to the settled portion and mark as settled
+        UPDATE expense_splits
+        SET 
+          amount = v_settled_portion,
+          is_settled = true,
+          settled_at = NOW()
+        WHERE id = v_split_record.id
+          AND is_settled = false
+          AND user_id = p_from_user;
+        
+        GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
+        
+        IF v_rows_updated > 0 THEN
+          v_settled_splits := array_append(v_settled_splits, v_split_record.id);
+          v_total_settled := v_total_settled + v_settled_portion;
+          v_remaining_amount := 0;
+        END IF;
+      END;
+      
+      -- Exit after partial settlement
       EXIT;
     END IF;
   END LOOP;
