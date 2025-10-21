@@ -7,7 +7,12 @@ const { createClient } = require('@supabase/supabase-js');
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
-const TEST_EMAIL = process.env.TEST_EMAIL || 'test@example.com';
+const TEST_EMAIL = process.env.TEST_EMAIL;
+
+if (!TEST_EMAIL) {
+  console.error('❌ TEST_EMAIL environment variable is required');
+  process.exit(1);
+}
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error('❌ Missing required environment variables:');
@@ -15,7 +20,6 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   if (!SUPABASE_ANON_KEY) console.error('   - VITE_SUPABASE_ANON_KEY');
   process.exit(1);
 }
-
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /**
