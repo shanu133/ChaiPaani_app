@@ -74,11 +74,11 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
     try {
       if (!group?.id) {
-        if (!group?.id) {
-          console.error("Group ID is missing");
-          alert("Group ID is missing. Please try again.");
-          return;
-        }      }
+        console.error("Group ID is missing");
+        toast.error("Group ID is missing. Please try again.");
+        return;
+      }
+
       // Invite the user to the group
       const { data: inviteData, error: inviteError } = await invitationService.inviteUser(
         group.id,
