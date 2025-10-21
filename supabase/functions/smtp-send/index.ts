@@ -12,8 +12,34 @@ interface SendBody {
   text?: string;
 }
 
+// SECURITY: ALLOWED_ORIGIN must be explicitly set to your trusted frontend origin in production.
+// Using "*" allows any website to call this function, which is a security risk.
+// Examples: "https://yourdomain.com" or "https://yourapp.vercel.app"
+// Only "*" is permitted if DENO_DEPLOYMENT_ID is not set (local development).
+const allowedOrigin = Deno.env.get("ALLOWED_ORIGIN");
+const isProduction = Deno.env.get("DENO_DEPLOYMENT_ID") !== undefined;
+
+// Validate CORS configuration
+if (!allowedOrigin) {
+  if (isProduction) {
+    // In production, ALLOWED_ORIGIN must be explicitly set
+    throw new Error(
+      "SECURITY ERROR: ALLOWED_ORIGIN environment variable is required in production. " +
+      "Set it to your trusted frontend origin (e.g., 'https://yourdomain.com'). " +
+      "Using '*' is insecure and allows any website to call this function."
+    );
+  } else {
+    // In development, warn but allow "*"
+    console.warn(
+      "⚠️  WARNING: ALLOWED_ORIGIN is not set. Using '*' which allows ANY origin. " +
+      "This is only acceptable in local development. " +
+      "Set ALLOWED_ORIGIN to your frontend URL before deploying to production."
+    );
+  }
+}
+
 const corsHeaders = {
-  "Access-Control-Allow-Origin": Deno.env.get("ALLOWED_ORIGIN") ?? "*",
+  "Access-Control-Allow-Origin": allowedOrigin ?? "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info",
   "Access-Control-Max-Age": "86400",
@@ -78,8 +104,7 @@ Deno.serve(async (req) => {
     }
 
     const host = Deno.env.get("SMTP_HOST") ?? "";
-    const port = Number(Deno.env.get("SMTP_PORT") ?? 587);
-    const user = Deno.env.get("SMTP_USERNAME") ?? "";
+    const port = numEnv("SMTP_PORT", 587);    const user = Deno.env.get("SMTP_USERNAME") ?? "";
     const pass = Deno.env.get("SMTP_PASSWORD") ?? "";
     const fromEmail = Deno.env.get("SMTP_FROM_EMAIL") ?? "noreply@example.com";
     const fromName = Deno.env.get("SMTP_FROM_NAME") ?? "ChaiPaani";
@@ -113,8 +138,7 @@ Deno.serve(async (req) => {
           from: `${fromName} <${fromEmail}>`,
           to,
           subject,
-          content: text || "auto",
-          html,
+          content: text || "",          html,
         }),
         timeoutMs,
         "SMTP send operation"
