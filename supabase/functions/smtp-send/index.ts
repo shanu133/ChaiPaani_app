@@ -1,7 +1,10 @@
 // Minimal SMTP send Edge Function.
-// IMPORTANT: Set environment variables in Supabase project:
-//  SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL, SMTP_FROM_NAME
-// Optionally: SMTP_SECURE ("true"|"false"), SMTP_TIMEOUT_MS (default: 30000)
+// REQUIRED environment variables in Supabase project:
+//  SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL
+// OPTIONAL environment variables:
+//  SMTP_PORT (default: 587), SMTP_FROM_NAME (default: "ChaiPaani")
+//  SMTP_SECURE ("true"|"false", auto-detected from port), SMTP_TIMEOUT_MS (default: 30000)
+//  ALLOWED_ORIGIN (required in production, see CORS validation below)
 
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
@@ -106,16 +109,16 @@ Deno.serve(async (req) => {
     const host = Deno.env.get("SMTP_HOST") ?? "";
     const port = numEnv("SMTP_PORT", 587);    const user = Deno.env.get("SMTP_USERNAME") ?? "";
     const pass = Deno.env.get("SMTP_PASSWORD") ?? "";
-    const fromEmail = Deno.env.get("SMTP_FROM_EMAIL") ?? "noreply@example.com";
+    const fromEmail = Deno.env.get("SMTP_FROM_EMAIL") ?? "";
     const fromName = Deno.env.get("SMTP_FROM_NAME") ?? "ChaiPaani";
     const secure = boolEnv("SMTP_SECURE", port === 465);
     const timeoutMs = numEnv("SMTP_TIMEOUT_MS", 30000); // Default 30 seconds
 
     // Debug logging (without password)
-    console.log("SMTP Config:", { host, port, user: user ? "set" : "missing", pass: pass ? "set" : "missing", fromEmail, fromName, secure, timeoutMs });
+    console.log("SMTP Config:", { host, port, user: user ? "set" : "missing", pass: pass ? "set" : "missing", fromEmail: fromEmail ? "set" : "missing", fromName, secure, timeoutMs });
 
-    if (!host || !user || !pass) {
-      return new Response(JSON.stringify({ ok: false, error: "SMTP env not configured" }), {
+    if (!host || !user || !pass || !fromEmail) {
+      return new Response(JSON.stringify({ ok: false, error: "SMTP environment not fully configured. Required: SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL" }), {
         status: 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
