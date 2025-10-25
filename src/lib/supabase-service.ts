@@ -385,6 +385,35 @@ export const expenseService = {
       await supabase.from('expenses').delete().eq('id', expense.id)
       return { data: null, error: splitsError }
     }
+
+    // Send email notifications asynchronously (don't wait or fail if it errors)
+    try {
+      const enableEmailNotifications = (import.meta as any).env?.VITE_ENABLE_EXPENSE_EMAILS !== 'false'
+      
+      if (enableEmailNotifications) {
+        // Call the notify-expense Edge function asynchronously
+        supabase.functions.invoke('notify-expense', {
+          body: {
+            expense_id: expense.id,
+            group_id: groupId,
+            payer_id: user.id,
+            description,
+            amount,
+            category
+          }
+        }).then(({ error: notifyError }) => {
+          if (notifyError) {
+            console.warn('Failed to send expense email notifications:', notifyError)
+          }
+        }).catch((err) => {
+          console.warn('Exception sending expense email notifications:', err)
+        })
+      }
+    } catch (err) {
+      // Ignore email notification errors - the expense was created successfully
+      console.warn('Failed to trigger expense email notifications:', err)
+    }
+
     return { data: expense, error: null }
   },
 
