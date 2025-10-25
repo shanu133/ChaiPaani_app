@@ -129,19 +129,13 @@ GRANT EXECUTE ON FUNCTION create_invitation_with_expiry TO authenticated;
 -- Step 6: Enhanced accept_group_invitation with expiration check
 -- Drop all existing versions of the function (handles multiple overloads)
 DO $$ 
-DECLARE
-  func_drop_stmt TEXT;
 BEGIN
-  -- Build DROP statements for all versions of accept_group_invitation
-  SELECT string_agg('DROP FUNCTION IF EXISTS ' || oid::regprocedure || ' CASCADE;', E'\n')
-  INTO func_drop_stmt
-  FROM pg_proc
-  WHERE proname = 'accept_group_invitation';
-  
-  -- Execute only if functions exist
-  IF func_drop_stmt IS NOT NULL THEN
-    EXECUTE func_drop_stmt;
-  END IF;
+  -- Drop function with any signature
+  EXECUTE (
+    SELECT string_agg('DROP FUNCTION IF EXISTS ' || oid::regprocedure || ';', ' ')
+    FROM pg_proc
+    WHERE proname = 'accept_group_invitation'
+  );
 END $$;
 
 CREATE OR REPLACE FUNCTION accept_group_invitation(p_token UUID)

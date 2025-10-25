@@ -1,84 +1,5 @@
 import { supabase } from './supabase'
 
-/**
- * Error normalization helper for Supabase/Postgres errors
- * 
- * Supabase client errors follow the PostgREST error format:
- * - error.code: PostgREST error code (e.g., 'PGRST116' for RPC function not found, '42501' for Postgres permission denied)
- * - error.details: Additional error details from Postgres
- * - error.hint: Postgres error hints
- * - error.message: Human-readable error message
- * 
- * Common Postgres error codes (SQLSTATE):
- * - '42501': insufficient_privilege (permission denied)
- * - '23503': foreign_key_violation
- * - '23505': unique_violation
- * - '42P01': undefined_table
- * - 'PGRST116': RPC function not found (PostgREST specific)
- * 
- * LIMITATION: RLS policy violations don't have specific error codes and manifest as
- * generic permission errors, so we must fall back to message inspection as last resort.
- */
-type ErrorNormalizationType = 'membership' | 'not_found' | 'unknown'
-
-interface NormalizeErrorOptions {
-  type: ErrorNormalizationType
-  fallbackMessage: string
-}
-
-function normalizeSupabaseError(error: any, options: NormalizeErrorOptions) {
-  if (!error) return null
-
-  // Check structured error codes first (preferred approach)
-  const errorCode = error.code || (error as any).error_code
-  const errorDetails = error.details || ''
-  
-  if (options.type === 'membership') {
-    // Postgres permission denied code (insufficient_privilege)
-    if (errorCode === '42501') {
-      return { message: options.fallbackMessage }
-    }
-    
-    // Check error details for RLS policy violations
-    if (errorDetails.toLowerCase().includes('policy')) {
-      return { message: options.fallbackMessage }
-    }
-    
-    // LAST RESORT: Message substring inspection
-    // This is fragile but necessary because RLS violations don't have specific codes
-    const msg = (error.message || '').toLowerCase()
-    if (msg.includes('not a member') || msg.includes('permission denied') || msg.includes('rls')) {
-      return { message: options.fallbackMessage }
-    }
-  }
-  
-  if (options.type === 'not_found') {
-    // PostgREST RPC function not found
-    if (errorCode === 'PGRST116') {
-      return { isNotFound: true }
-    }
-    
-    // HTTP 404 status
-    if ((error as any)?.status === 404) {
-      return { isNotFound: true }
-    }
-    
-    // Postgres undefined table/function
-    if (errorCode === '42P01' || errorCode === '42883') {
-      return { isNotFound: true }
-    }
-    
-    // LAST RESORT: Message substring inspection
-    const msg = (error.message || '').toLowerCase()
-    if (msg.includes('not found') || msg.includes('does not exist')) {
-      return { isNotFound: true }
-    }
-  }
-  
-  // Return original error if no normalization applies
-  return null
-}
-
 export const authService = {
   signUp: async (email: string, password: string, fullName: string) => {
     const { data, error } = await supabase.auth.signUp({
@@ -105,8 +26,10 @@ export const authService = {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL
-      }
+        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || (() => {
+          if (typeof window !== 'undefined') return window.location.origin
+          throw new Error('VITE_SUPABASE_REDIRECT_URL must be configured')
+        })()      }
     })
     return { data, error }
   },
@@ -437,13 +360,10 @@ export const expenseService = {
       .single()
 
     if (expenseError) {
-      // Use structured error normalization instead of fragile message substring checks
-      const normalized = normalizeSupabaseError(expenseError, {
-        type: 'membership',
-        fallbackMessage: 'User is not a member of this group'
-      })
-      if (normalized) {
-        return { data: null, error: normalized }
+      // Normalize common membership errors
+      const msg = (expenseError.message || '').toLowerCase()
+      if (msg.includes('not a member') || msg.includes('permission denied') || msg.includes('rls')) {
+        return { data: null, error: { message: 'User is not a member of this group' } }
       }
       return { data: null, error: expenseError }
     }
@@ -661,8 +581,7 @@ export const expenseService = {
     const user = await authService.getCurrentUser()
     if (!user) return { data: null, error: { message: 'User not authenticated' } }
 
-    // Use server-side RPC for atomic settle with advisory locks and optimistic locking
-    // This prevents race conditions and ensures all-or-nothing settlement
+    // Delegate to server-side RPC for atomic settle + logging
     const { data, error } = await supabase.rpc('settle_group_debt', {
       p_group_id: groupId,
       p_from_user: fromUserId,
@@ -671,7 +590,86 @@ export const expenseService = {
     })
 
     if (error) {
-      return { data: null, error }
+      const msg = (error.message || '').toLowerCase()
+      const isMissing = (error as any)?.status === 404 || msg.includes('not found') || msg.includes('does not exist')
+      if (!isMissing) {
+        return { data: null, error }
+      }
+
+      // Fallback path: perform client-side settle if RPC isn't available yet
+      try {
+        // Find unsettled expense splits that can be settled (join-safe selection)
+        const { data: splitsToSettle, error: fetchError } = await supabase
+          .from('expense_splits')
+          .select('id, amount, expense_id, is_settled')
+          .eq('user_id', fromUserId)
+          .eq('is_settled', false)
+          .order('created_at', { ascending: true })
+
+        if (fetchError) return { data: null, error: fetchError }
+
+        let remainingAmount = amount
+        let totalSettled = 0
+        const settledSplits: string[] = []
+
+        for (const split of splitsToSettle || []) {
+          if (remainingAmount <= 0) break
+          const { data: exp, error: expErr } = await supabase
+            .from('expenses')
+            .select('id, payer_id, group_id')
+            .eq('id', split.expense_id)
+            .single()
+
+          if (expErr || !exp) continue
+          if (exp.payer_id === toUserId && exp.group_id === groupId) {
+            // Only settle full splits to avoid marking partially-paid splits as settled
+            if (remainingAmount >= (split as any).amount) {
+              // Verify user can settle this split (either the payer or the one who owes)
+              if (exp.payer_id !== user.id && fromUserId !== user.id) {
+                continue
+              }
+
+              const { error: settleError } = await supabase
+                .from('expense_splits')
+                .update({
+                  is_settled: true,
+                  settled_at: new Date().toISOString()
+                })
+                .eq('id', (split as any).id)
+
+              if (settleError) continue
+              settledSplits.push((split as any).id)
+              remainingAmount -= (split as any).amount
+              totalSettled += (split as any).amount
+            } else {
+              break
+            }
+          }
+        }
+
+        if (totalSettled > 0) {
+          await supabase
+            .from('settlements')
+            .insert({
+              group_id: groupId,
+              payer_id: fromUserId,
+              receiver_id: toUserId,
+              amount: totalSettled,
+              description: 'Settle up'
+            })
+        }
+
+        return {
+          data: {
+            settled_splits: settledSplits,
+            settled_amount: totalSettled,
+            remaining_amount: remainingAmount
+          },
+          error: null
+        }
+      } catch (e: any) {
+        return { data: null, error: { message: e?.message || 'Fallback settle failed' } }
+      }
     }
 
     return {
@@ -761,20 +759,8 @@ export const invitationService = {
       // Email delivery path
       const enableSmtp = (import.meta as any).env?.VITE_ENABLE_SMTP === 'true'
       const enableLegacyInvite = (import.meta as any).env?.VITE_ENABLE_INVITE_EMAIL === 'true'
-      
-      // Debug logging (mask email PII - only log domain)
-      const emailDomain = email.includes('@') ? email.split('@')[1] : 'unknown'
-      console.log('📧 Email delivery check:', {
-        enableSmtp,
-        enableLegacyInvite,
-        VITE_ENABLE_SMTP: (import.meta as any).env?.VITE_ENABLE_SMTP,
-        hasEmail: !!email,
-        emailDomain: emailDomain
-      })
-      
       // Try SMTP first if enabled, else fall back to legacy edge invite function
       if (enableSmtp) {
-        console.log('✅ SMTP enabled, sending email...')
         try {
           // Fetch group name for a nicer email
           const { data: groupData } = await supabase
@@ -803,108 +789,25 @@ export const invitationService = {
               <p style="color:#64748b;font-size:12px">If you didn't expect this invitation, you can ignore this email.</p>
             </div>
           `
-          console.log('📤 Invoking smtp-send function...', { emailDomain, subject: title })
-          const smtpResult = await supabase.functions.invoke('smtp-send', {
+          await supabase.functions.invoke('smtp-send', {
             body: { to: email.toLowerCase(), subject: title, html }
           })
-          console.log('📬 SMTP result:', smtpResult)
-          
-          // Check if email actually sent successfully
-          if (smtpResult.error) {
-            console.error('❌ SMTP function error:', smtpResult.error)
-            return { 
-              data: { ok: true, token: invitation.token, emailSent: false, emailError: smtpResult.error }, 
-              error: null 
-            }
-          }
-          if (!smtpResult.data?.ok) {
-            console.error('❌ SMTP send failed:', smtpResult.data)
-            return { 
-              data: { ok: true, token: invitation.token, emailSent: false, emailError: smtpResult.data?.error || 'SMTP send failed' }, 
-              error: null 
-            }
-          }
-          
-          // Email sent successfully
-          return { 
-            data: { ok: true, token: invitation.token, emailSent: true, smtpResult: smtpResult.data }, 
-            error: null 
-          }
         } catch (emailError) {
-          console.error('❌ SMTP email delivery exception, invitation still created:', emailError)
-          return { 
-            data: { ok: true, token: invitation.token, emailSent: false, emailError: emailError instanceof Error ? emailError.message : String(emailError) }, 
-            error: null 
-          }
+          console.warn('SMTP email delivery failed, invitation still created:', emailError)
         }
       } else if (enableLegacyInvite) {
         try {
           await supabase.functions.invoke('invite-user', {
             body: { groupId, email, token: invitation.token }
           })
-          return { data: { ok: true, token: invitation.token, emailSent: true }, error: null }
         } catch (emailError) {
-          console.error('❌ Legacy email delivery exception, invitation still created:', emailError)
-          return { 
-            data: { ok: true, token: invitation.token, emailSent: false, emailError: emailError instanceof Error ? emailError.message : String(emailError) }, 
-            error: null 
-          }
+          console.warn('Legacy email delivery failed (or CORS), but invitation created:', emailError)
         }
       }
-      
-      // No email service enabled - invitation created but no email sent
-      return { data: { ok: true, token: invitation.token, emailSent: false, emailError: 'SMTP not enabled' }, error: null }
+
+      return { data: { ok: true, token: invitation.token }, error: null }
     } catch (error) {
       console.error('Error in inviteUser:', error)
-      return { data: null, error }
-    }
-  },
-  resendInvite: async (groupId: string, email: string) => {
-    try {
-      // Check if SMTP is enabled before attempting to resend
-      const enableSmtp = (import.meta as any).env?.VITE_ENABLE_SMTP === 'true'
-      if (!enableSmtp) {
-        console.warn('⚠️ SMTP not enabled - cannot resend invitation email')
-        return { data: null, error: { message: 'SMTP not enabled' } }
-      }
-
-      // Look up pending invite for this email
-      const { data: invites, error } = await supabase
-        .from('invitations')
-        .select('token, status')
-        .eq('group_id', groupId)
-        .eq('invitee_email', email.toLowerCase())
-        .order('created_at', { ascending: false })
-        .limit(1)
-
-      if (error) return { data: null, error }
-      const invite = invites?.[0]
-      if (!invite || invite.status !== 'pending') {
-        return { data: null, error: { message: 'No pending invitation found for this email' } }
-      }
-
-      const base = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.replace(/\/$/, '')
-        || (typeof window !== 'undefined' ? window.location.origin : '')
-        || ''
-      const inviteUrl = `${base}/#token=${encodeURIComponent(invite.token)}`
-      const title = `ChaiPaani invitation reminder`
-      const html = `
-        <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height:1.6;">
-          <h3>${title}</h3>
-          <p>This is a friendly reminder to join the group. Click below to accept:</p>
-          <p style="margin:20px 0;">
-            <a href="${inviteUrl}" style="background:#3b82f6;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;display:inline-block">Accept Invitation</a>
-          </p>
-          <p>Or open this link: <a href="${inviteUrl}">${inviteUrl}</a></p>
-        </div>
-      `
-      const { data, error: sendErr } = await supabase.functions.invoke('smtp-send', {
-        body: { to: email.toLowerCase(), subject: title, html }
-      })
-      if (sendErr) return { data: null, error: sendErr }
-      if (!data?.ok) return { data: null, error: { message: data?.error || 'Failed to send email' } as any }
-      return { data: { ok: true }, error: null }
-    } catch (error) {
       return { data: null, error }
     }
   },
@@ -949,9 +852,115 @@ export const invitationService = {
   acceptInviteById: async (inviteId: string) => {
     const user = await authService.getCurrentUser()
     if (!user) return { data: null, error: { message: 'User not authenticated' } }
+
+    // Fetch the invitation
+    const { data: invitation, error: fetchError } = await supabase
+      .from('invitations')
+      .select('token, status, invitee_email')
+      .eq('id', inviteId)
+      .single()
+
+    if (fetchError || !invitation) {
+      return { data: null, error: fetchError || { message: 'Invitation not found' } }
+    }
+
+    // Verify the invitation is for the current user
+    if (invitation.invitee_email.toLowerCase() !== user.email?.toLowerCase()) {
+      return { data: null, error: { message: 'Invitation is not for this user' } }
+    }
+
+    if (invitation.status !== 'pending') {
+      return { data: null, error: { message: `Invitation is already ${invitation.status}` } }
+    }
+
+    // Accept using the token
+    return await invitationService.acceptByToken(invitation.token)
+  },
+  resendInvite: async (groupId: string, email: string) => {
+    try {
+      const user = await authService.getCurrentUser()
+      if (!user) return { data: null, error: { message: 'User not authenticated' } }
+
+      // Verify caller is group creator/admin
+      const { data: group, error: groupError } = await supabase
+        .from('groups')
+        .select('created_by')
+        .eq('id', groupId)
+        .single()
+      
+      if (groupError) return { data: null, error: groupError }
+      if (group.created_by !== user.id) return { data: null, error: { message: 'Only group creator can resend invitations' } }
+
+      // Look up pending invite for this email
+      const { data: invites, error } = await supabase
+        .from('invitations')
+        .select('token, status')
+        .eq('group_id', groupId)
+        .eq('invitee_email', email.toLowerCase())
+        .order('created_at', { ascending: false })
+        .limit(1)
+
+      if (error) return { data: null, error }
+      const invite = invites?.[0]
+      if (!invite || invite.status !== 'pending') {
+        return { data: null, error: { message: 'No pending invitation found for this email' } }
+      }
+
+      const base = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.replace(/\/$/, '')
+        || (typeof window !== 'undefined' ? window.location.origin : '')
+        || ''
+      const inviteUrl = `${base}/#token=${encodeURIComponent(invite.token)}`
+      const title = `ChaiPaani invitation reminder`
+      const html = `
+        <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height:1.6;">
+          <h3>${title}</h3>
+          <p>This is a friendly reminder to join the group. Click below to accept:</p>
+          <p style="margin:20px 0;">
+            <a href="${inviteUrl}" style="background:#3b82f6;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;display:inline-block">Accept Invitation</a>
+          </p>
+          <p>Or open this link: <a href="${inviteUrl}">${inviteUrl}</a></p>
+        </div>
+      `
+      const { data, error: sendErr } = await supabase.functions.invoke('smtp-send', {
+        body: { to: email.toLowerCase(), subject: title, html }
+      })
+      if (sendErr) return { data: null, error: sendErr }
+      if (!data?.ok) return { data: null, error: { message: data?.error || 'Failed to send email' } as any }
+      return { data: { ok: true }, error: null }
+    } catch (error) {
+      return { data: null, error }
+    }
+  }
+}
+
+// Profiles join-safe helpers
+export const profileService = {
+  getCurrentProfile: async () => {
+    const user = await authService.getCurrentUser()
+    if (!user) return { data: null, error: { message: 'User not authenticated' } }
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, display_name, full_name, email, avatar_url, phone')
+      .eq('id', user.id)
+      .single()
+    return { data, error }
+  },
+  updateProfile: async (updates: { display_name?: string; phone?: string }) => {
+    const user = await authService.getCurrentUser()
+    if (!user) return { data: null, error: { message: 'User not authenticated' } }
     
-    // This function is deprecated - use acceptByToken instead
-    return { data: null, error: { message: 'This method is deprecated. Use acceptByToken instead.' } }
+    // Build update object with only provided fields
+    const updateData: any = {}
+    if (updates.display_name !== undefined) updateData.display_name = updates.display_name
+    if (updates.phone !== undefined) updateData.phone = updates.phone
+    
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(updateData)
+      .eq('id', user.id)
+      .select('id, display_name, phone')
+      .single()
+    return { data, error }
   },
   updateDisplayName: async (displayName: string) => {
     const user = await authService.getCurrentUser()
