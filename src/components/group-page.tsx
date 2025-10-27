@@ -97,6 +97,15 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
     fetchCurrentUser();
   }, [groupId]);
 
+  // Reload group data when window gains focus (e.g., when user returns from email)
+  useEffect(() => {
+    const handleFocus = () => {
+      fetchGroupDetails();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [groupId]);
+
   const fetchGroupDetails = async () => {
     try {
       setLoading(true);
