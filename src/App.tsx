@@ -1,4 +1,12 @@
 import { useState, useEffect, lazy, Suspense } from "react";
+
+// No longer needed, vite.config.ts handles this
+// console.log('🔍 DEBUG: Checking environment variables on app load...');
+// console.log('VITE_ENABLE_SMTP:', import.meta.env.VITE_ENABLE_SMTP);
+// console.log('VITE_ENABLE_EXPENSE_EMAILS:', import.meta.env.VITE_ENABLE_EXPENSE_EMAILS);
+// console.log('VITE_PUBLIC_APP_URL:', import.meta.env.VITE_PUBLIC_APP_URL);
+// console.log('All env vars:', import.meta.env);
+
 const LandingPage = lazy(() => import("./components/landing-page").then(m => ({ default: m.LandingPage })));
 const AuthPage = lazy(() => import("./components/auth-page").then(m => ({ default: m.AuthPage })));
 const Dashboard = lazy(() => import("./components/dashboard").then(m => ({ default: m.Dashboard })));
@@ -15,6 +23,10 @@ type AppView = "landing" | "auth" | "dashboard" | "groups" | "group" | "notifica
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>("landing");
+  // Debug: log view changes
+  useEffect(() => {
+    console.log("[App] currentView:", currentView);
+  }, [currentView]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
@@ -53,15 +65,17 @@ export default function App() {
         const user = await authService.getCurrentUser();
         if (user) {
           setIsAuthenticated(true);
-          setCurrentView("dashboard");
+          // Only set dashboard if not already in settings
+          setCurrentView(v => v === "settings" ? v : "dashboard");
         } else {
           setIsAuthenticated(false);
-          setCurrentView("landing");
+          // Don't force redirect if already in settings
+          setCurrentView(v => v === "settings" ? v : "landing");
         }
       } catch (error) {
         console.error("Auth check failed:", error);
         setIsAuthenticated(false);
-        setCurrentView("landing");
+        setCurrentView(v => v === "settings" ? v : "landing");
       } finally {
         setIsLoading(false);
       }
@@ -73,10 +87,10 @@ export default function App() {
     const { data: { subscription } } = authService.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setIsAuthenticated(true);
-        setCurrentView("dashboard");
+        setCurrentView(v => v === "settings" ? v : "dashboard");
       } else if (event === 'SIGNED_OUT') {
         setIsAuthenticated(false);
-        setCurrentView("landing");
+        setCurrentView(v => v === "settings" ? v : "landing");
       }
     });
 

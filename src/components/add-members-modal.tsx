@@ -101,19 +101,19 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
 
       setNewMemberName("");
       setNewMemberEmail("");
-  onMembersAdded();
-  // Update local pending list
-  if (inviteData.id) {
-    setPendingInvites(prev => [
-      { 
-        id: inviteData.id, 
-        email: newMemberEmail.trim().toLowerCase(), 
-        created_at: new Date().toISOString(), 
-        token: inviteData.token 
-      }, 
-      ...prev
-    ]);
-  }
+      onMembersAdded();
+      // Update local pending list
+      if (inviteData?.ok && inviteData?.token) {
+        setPendingInvites(prev => [
+          { 
+            id: inviteData.token, 
+            email: newMemberEmail.trim().toLowerCase(), 
+            created_at: new Date().toISOString(), 
+            token: inviteData.token 
+          }, 
+          ...prev
+        ]);
+      }
     } catch (error) {
       console.error("Error in addMember:", error);
       alert("Failed to add member. Please try again.");
@@ -195,7 +195,11 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
                     try {
                       const { error } = await invitationService.resendInvite(group.id, lastInviteEmail);
                       if (error) {
-                        alert(`Failed to resend email: ${(error as any)?.message || 'Unknown error'}`);
+                        if ((error as any)?.message?.includes('email_exists')) {
+                          alert('This email is already registered. Please ask them to log in or use password reset.');
+                        } else {
+                          alert(`Failed to resend email: ${(error as any)?.message || 'Unknown error'}`);
+                        }
                         return;
                       }
                       alert('Invitation email resent');
@@ -234,7 +238,11 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
                           try {
                             const { error } = await invitationService.resendInvite(group.id, inv.email);
                             if (error) {
-                              alert(`Failed to resend: ${(error as any)?.message || 'Unknown error'}`);
+                              if ((error as any)?.message?.includes('email_exists')) {
+                                alert('This email is already registered. Please ask them to log in or use password reset.');
+                              } else {
+                                alert(`Failed to resend: ${(error as any)?.message || 'Unknown error'}`);
+                              }
                               return;
                             }
                             alert('Invitation email resent');

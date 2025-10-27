@@ -1,30 +1,26 @@
-// Minimal SMTP send Edge Function.    console.log("SMTP Config:", { host, port, user: user ? "set" : "missing", fromEmail, fromName, secure });// IMPORTANT: Set environment variables in Supabase project:
-//  SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL, SMTP_FROM_NAME
-// Optionally: SMTP_SECURE ("true"|"false")
-
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.1/mod.ts";
+// IMPORTANT: Email sender using Supabase Auth invite with custom data
+// deno-lint-ignore-file no-explicit-any
+// @ts-ignore
+declare const Deno: any;
 
 interface SendBody {
   to: string | string[];
   subject: string;
   html?: string;
   text?: string;
+  inlineLogoUrl?: string;
+  groupName?: string;
+  inviterName?: string;
 }
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": Deno.env.get("ALLOWED_ORIGIN") ?? "",  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info",
   "Access-Control-Max-Age": "86400",
 };
 
-function boolEnv(name: string, def = false): boolean {
-  const v = (Deno.env.get(name) ?? "").toLowerCase();
-  if (v === "true" || v === "1" || v === "yes") return true;
-  if (v === "false" || v === "0" || v === "no") return false;
-  return def;
-}
-
-Deno.serve(async (req) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { status: 200, headers: corsHeaders });
   }
@@ -36,58 +32,79 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { to, subject, html, text } = (await req.json()) as SendBody;
+    const { to, subject, html, text, groupName, inviterName } = (await req.json()) as SendBody;
     if (!to || !subject) {
-    const { to, subject, html, text } = (await req.json()) as SendBody;
-    if (!to || !subject || (!html && !text)) {
-      return new Response(JSON.stringify({ ok: false, error: "Missing required fields: 'to', 'subject', and at least one of 'html' or 'text'" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      });
-    }    const port = numEnv("SMTP_PORT", 587);    const user = Deno.env.get("SMTP_USERNAME") ?? "";
-    const pass = Deno.env.get("SMTP_PASSWORD") ?? "";
-    const fromEmail = Deno.env.get("SMTP_FROM_EMAIL") ?? "noreply@example.com";
-    const fromName = Deno.env.get("SMTP_FROM_NAME") ?? "ChaiPaani";
-    const secure = boolEnv("SMTP_SECURE", port === 465);
+      return new Response(
+        JSON.stringify({ ok: false, error: "Missing required fields" }),
+        { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
 
-    if (!host || !user || !pass) {
-      return new Response(JSON.stringify({ ok: false, error: "SMTP env not configured" }), {
+    // Get Supabase credentials from environment
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error("Missing Supabase configuration");
+      return new Response(JSON.stringify({ ok: false, error: "Email service not configured" }), {
         status: 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
-    const client = new SMTPClient({
-      connection: {
-        hostname: host,
-        port,
-        tls: secure,
-        auth: { username: user, password: pass },
+    // Prepare data for the invite
+    const inviteData = {
+      groupName: groupName || "a group",
+      inviterName: inviterName || "Someone",
+      subject: subject,
+      html: html,
+      text: text,
+    };
+
+    // Send invite using Supabase REST API
+    const response = await fetch(`${supabaseUrl}/auth/v1/invite`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${supabaseServiceKey}`,
+        "Content-Type": "application/json",
+        "apikey": supabaseServiceKey,
       },
+      body: JSON.stringify({
+        email: Array.isArray(to) ? to[0] : to,
+        data: inviteData,
+        redirect_to: `${Deno.env.get("SITE_URL") || "http://localhost:3002"}/auth/callback`
+      }),
     });
 
-    try {
-      await client.send({
-        from: `${fromName} <${fromEmail}>`,
-        to,
-        subject,
-        content: html ? undefined : text || "",
-        html,
-      });
-      await client.close();
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      });
-    } catch (e) {
-      try { await client.close(); } catch {}
-      return new Response(JSON.stringify({ ok: false, error: e?.message || String(e) }), {
+    if (!response.ok) {
+      const errorData = await response.text();
+      console.error("Supabase API error:", errorData);
+      
+      // If user already exists, return success (don't send email for existing users)
+      if (errorData.includes('email_exists')) {
+        console.log("User already exists, skipping invite email (user is already registered)");
+        return new Response(JSON.stringify({ ok: true, message: "User already registered" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify({ ok: false, error: `Email service error: ${response.status}` }), {
         status: 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
+
+    const result = await response.json();
+    console.log("Email sent successfully via Supabase Auth:", { to, subject, result });
+
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    });
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: e?.message || "Internal error" }), {
+    console.error("Email sending failed:", e);
+    return new Response(JSON.stringify({ ok: false, error: String(e instanceof Error ? e.message : "Internal error") }), {
       status: 500,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });
