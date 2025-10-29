@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Separator } from "./ui/separator";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
-import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
+import ChaiPaaniLogoFull from "../assets/chaipaani_logo.png";
 import { ArrowLeft, Mail, Lock, Eye, EyeOff, Phone, Loader2 } from "lucide-react";
 import { authService } from "../lib/supabase-service";
 

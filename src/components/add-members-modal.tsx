@@ -1,19 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { useEffect, useState } from "react";
+import { Button } from "./ui/button";import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
-import { Plus, Users } from "lucide-react";
+import { Plus, Users, RefreshCw, Mail } from "lucide-react";
 import { invitationService } from "../lib/supabase-service";
 
-// Build a shareable invite link using base from VITE_PUBLIC_APP_URL or current origin.
-// For token security, place the token in the URL fragment instead of a query parameter.
-function buildInviteLink(token?: string | null): string | null {
-  if (!token) return null;
-  const publicBase = (import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined;
-  const base = (publicBase && publicBase.trim().length > 0) ? publicBase.replace(/\/$/, '') : window.location.origin;
-  return `${base}/#token=${encodeURIComponent(token)}`;
-}
+// Copy-link was removed; invites are email-based.
 
 // Reusable helper to copy text to clipboard with a DOM fallback
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -63,7 +55,6 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberEmail, setNewMemberEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [lastInviteToken, setLastInviteToken] = useState<string | null>(null);
   const [lastInviteEmail, setLastInviteEmail] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -75,8 +66,6 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
     status: string;
   }
   const [pendingInvites, setPendingInvites] = useState<Array<{ id: string; email: string; created_at: string; token?: string }>>([]);
-
-  const inviteLink = useMemo(() => buildInviteLink(lastInviteToken), [lastInviteToken]);
 
   // Load existing pending invitations for this group via service (typed)
   useEffect(() => {
@@ -120,15 +109,14 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
     } else {
       setEmailError(null);
     }
-
     setIsLoading(true);
 
     try {
       if (!group?.id) {
-        setEmailError("Group ID is missing");
+        console.error("Group ID is missing");
+        alert("Group ID is missing. Please try again.");
         return;
       }
-
       // Invite the user to the group
       const { data: inviteData, error: inviteError } = await invitationService.inviteUser(
         group.id,
@@ -147,33 +135,36 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
         return;
       }
 
-  setLastInviteToken(inviteData.token);
   setLastInviteEmail(newMemberEmail.trim().toLowerCase());
   console.log(`Invitation sent to ${newMemberEmail}!`);
-  alert(`Invitation created for ${newMemberEmail}`);
+  alert(`Invitation email sent to ${newMemberEmail}`);
 
-  setNewMemberName("");
-  setNewMemberEmail("");
-  setNameError(null);
-  setEmailError(null);
-  onMembersAdded();
-  // Update local pending list
-  setPendingInvites(prev => [{ id: crypto.randomUUID?.() || String(Date.now()), email: newMemberEmail.trim().toLowerCase(), created_at: new Date().toISOString(), token: inviteData.token }, ...prev])
-
+      setNewMemberName("");
+      setNewMemberEmail("");
+      onMembersAdded();
+      // Update local pending list
+      if (inviteData?.ok && inviteData?.token) {
+        setPendingInvites(prev => [
+          { 
+            id: inviteData.token, 
+            email: newMemberEmail.trim().toLowerCase(), 
+            created_at: new Date().toISOString(), 
+            token: inviteData.token 
+          }, 
+          ...prev
+        ]);
+      }
     } catch (error) {
       console.error("Error in addMember:", error);
-      const message = (error as any)?.message || 'Failed to add member. Please try again.';
-      alert(`Failed to add member: ${message}`);
+      alert("Failed to add member. Please try again.");
     } finally {
       setIsLoading(false);
-    }
-  };
+    }  };
 
   const handleClose = () => {
     if (!isLoading) {
       setNewMemberName("");
       setNewMemberEmail("");
-      setLastInviteToken(null);
       setLastInviteEmail(null);
       onClose();
     }
@@ -243,23 +234,37 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
             </div>
           </div>
 
-          {/* Shareable invite link (if available) */}
-          {lastInviteToken && inviteLink && (
+          {/* Invite status */}
+          {lastInviteEmail && (
             <div className="p-3 border rounded-md bg-muted/40 space-y-2">
-              <div className="text-sm">
-                <span className="font-medium">Invite created</span>
-                {lastInviteEmail ? (
-                  <span className="text-muted-foreground"> — share this link with {lastInviteEmail}</span>
-                ) : null}
-              </div>
-              <div className="flex gap-2 items-center">
-                <Input readOnly value={inviteLink} className="text-xs" />
+              <div className="text-sm flex items-center justify-between">
+                <div>
+                  <span className="font-medium">Invitation email sent</span>
+                  <span className="text-muted-foreground"> — {lastInviteEmail}</span>
+                </div>
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => copyToClipboard(inviteLink)}
+                  size="sm"
+                  onClick={async () => {
+                    if (!group?.id || !lastInviteEmail) return;
+                    try {
+                      const { error } = await invitationService.resendInvite(group.id, lastInviteEmail);
+                      if (error) {
+                        if ((error as any)?.message?.includes('email_exists')) {
+                          alert('This email is already registered. Please ask them to log in or use password reset.');
+                        } else {
+                          alert(`Failed to resend email: ${(error as any)?.message || 'Unknown error'}`);
+                        }
+                        return;
+                      }
+                      alert('Invitation email resent');
+                    } catch (e) {
+                      alert('Failed to resend email');
+                    }
+                  }}
                 >
-                  Copy
+                  <RefreshCw className="w-4 h-4 mr-2" /> Resend
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
@@ -268,30 +273,38 @@ export function AddMembersModal({ isOpen, onClose, group, onMembersAdded }: AddM
             </div>
           )}
 
-          {/* Pending invitations list with copy buttons */}
+          {/* Pending invitations list with resend buttons */}
           {pendingInvites.length > 0 && (
             <div className="space-y-2">
               <div className="text-sm font-medium">Pending invitations</div>
               <div className="space-y-2">
                 {pendingInvites.map((inv) => {
-                  const link = buildInviteLink(inv.token || undefined);
                   return (
                     <div key={inv.id} className="flex items-center gap-2 text-sm">
-                      <div className="flex-1">
-                        <div>{inv.email}</div>
-                        <div className="text-xs text-muted-foreground">Sent {new Date(inv.created_at).toLocaleString()}</div>
-                      </div>
-                      {link ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => copyToClipboard(link)}
-                        >
-                          Copy link
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">No link</span>
-                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          if (!group?.id) return;
+                          try {
+                            const { error } = await invitationService.resendInvite(group.id, inv.email);
+                            if (error) {
+                              if ((error as any)?.message?.includes('email_exists')) {
+                                alert('This email is already registered. Please ask them to log in or use password reset.');
+                              } else {
+                                alert(`Failed to resend: ${(error as any)?.message || 'Unknown error'}`);
+                              }
+                              return;
+                            }
+                            alert('Invitation email resent');
+                          } catch (e) {
+                            alert('Failed to resend email');
+                          }
+                        }}
+                      >
+                        <Mail className="w-4 h-4 mr-2" /> Resend
+                      </Button>
                     </div>
                   )
                 })}

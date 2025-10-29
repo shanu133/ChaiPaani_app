@@ -10,8 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
 import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
-import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
-import { toast } from "sonner";
+import ChaiPaaniLogoFull from "../assets/chaipaani_logo.png";
+import * as Sonner from "sonner";
 import { profileService, authService } from "../lib/supabase-service";
 import { 
   ArrowLeft,
@@ -28,6 +28,7 @@ import {
   Save,
   X
 } from "lucide-react";
+import SmtpSettingsModal from "./smtp-settings-modal";
 
 interface SettingsPageProps {
   onBack: () => void;
@@ -38,6 +39,8 @@ interface SettingsPageProps {
 export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProps) {
   const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'privacy' | 'appearance' | 'data'>('profile');
   const [isEditing, setIsEditing] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [smtpOpen, setSmtpOpen] = useState(false);
   
   // Profile settings (loaded from Supabase)
   const [profile, setProfile] = useState({
@@ -70,9 +73,9 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
         setProfile({
           name: (data?.display_name || data?.full_name || user?.email || "User") as string,
           email: (data?.email || user?.email || "") as string,
-          phone: "",
-          defaultCurrency: "INR",
-          language: "English",
+          phone: (data?.phone || "") as string,
+          defaultCurrency: localStorage.getItem('defaultCurrency') || "INR",
+          language: localStorage.getItem('language') || "English",
         });
       } catch (e: any) {
         setProfileError(e?.message || "Failed to load profile");
@@ -114,54 +117,74 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
   });
 
   const handleSaveProfile = async () => {
-  try {
-    setSavingProfile(true);
+    // Prevent concurrent saves
+    if (savingProfile) return;
+    
+    try {
+      setSavingProfile(true);
 
-    const displayName = profile.name?.trim();
-    if (!displayName) {
-      toast.error("Name cannot be empty");
-      return;
+      // Validate required fields
+      const displayName = profile.name?.trim();
+      if (!displayName) {
+        (Sonner as any)?.toast?.error?.("Name cannot be empty");
+        return;
+      }
+
+      // Validate phone if provided
+      const phone = profile.phone?.trim() || '';
+      if (phone && !/^[\d\s\-\+\(\)]+$/.test(phone)) {
+        (Sonner as any)?.toast?.error?.("Invalid phone number format");
+        return;
+      }
+
+      // Update profile in database (name and phone)
+      const { error } = await profileService.updateProfile({
+        display_name: displayName,
+        phone: phone || undefined
+      });
+
+      if (error) {
+        (Sonner as any)?.toast?.error?.(error.message || "Failed to update profile");
+        return;
+      }
+
+      // Save UI preferences to localStorage
+      localStorage.setItem('defaultCurrency', profile.defaultCurrency);
+      localStorage.setItem('language', profile.language);
+
+      // Only clear editing state after successful save
+      setIsEditing(false);
+      (Sonner as any)?.toast?.success?.("Profile updated successfully!");
+    } catch (e: any) {
+      (Sonner as any)?.toast?.error?.(e?.message || "Failed to update profile");
+    } finally {
+      setSavingProfile(false);
     }
-
-    const { error } = await profileService.updateDisplayName(displayName);
-
-    if (error) {
-      toast.error(error.message || "Failed to update profile");
-      return;
-    }
-
-    setIsEditing(false);
-    toast.success("Profile updated successfully!");
-  } catch (e: any) {
-    toast.error(e?.message || "Failed to update profile");
-  } finally {
-    setSavingProfile(false);
-  }
-};
+  };
   const handleDeleteAccount = () => {
-    toast.error("Account deletion requested. Please contact support.");
+    (Sonner as any)?.toast?.error?.("Account deletion requested. Please contact support.");
   };
 
   const handleExportData = () => {
-    toast.success("Data export started. You'll receive an email when ready.");
+    (Sonner as any)?.toast?.success?.("Data export started. You'll receive an email when ready.");
   };
 
-  const handleImportData = () => {
-    toast.success("Data import feature coming soon!");
-  };
+  // const handleImportData = () => {
+  //   (Sonner as any)?.toast?.success?.("Data import feature coming soon!");
+  // };
 
   const handleChangePhoto = () => {
-    toast.success("Photo upload feature coming soon!");
+    (Sonner as any)?.toast?.success?.("Photo upload feature coming soon!");
   };
 
   const handleAppearanceChange = (setting: string, value: any) => {
     setAppearance(prev => ({ ...prev, [setting]: value }));
     if (setting === 'theme') {
-      toast.success(`Theme changed to ${value}`);
+      (Sonner as any)?.toast?.success?.(`Theme changed to ${value}`);
     } else if (setting === 'compactView') {
-      toast.success(`Compact view ${value ? 'enabled' : 'disabled'}`);
+      (Sonner as any)?.toast?.success?.(`Compact view ${value ? 'enabled' : 'disabled'}`);
     } else {
-      toast.success("Appearance setting updated!");
+      (Sonner as any)?.toast?.success?.("Appearance setting updated!");
     }
   };
 
@@ -246,13 +269,19 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                   <Button
                     variant={isEditing ? "outline" : "ghost"}
                     size="sm"
-                    onClick={() => isEditing ? handleSaveProfile() : setIsEditing(true)}
-                    disabled={savingProfile}
+                    disabled={Boolean(isEditing && savingProfile)}
+                    onClick={() => {
+                      if (isEditing) {
+                        if (!savingProfile) handleSaveProfile();
+                      } else {
+                        setIsEditing(true);
+                      }
+                    }}
                   >
                     {isEditing ? (
                       <>
                         <Save className="w-4 h-4 mr-2" />
-                        Save
+                        {savingProfile ? 'Saving...' : 'Save'}
                       </>
                     ) : (
                       <>
@@ -371,11 +400,19 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                 
                 {isEditing && (
                   <div className="flex gap-2 pt-4">
-                    <Button onClick={handleSaveProfile} disabled={savingProfile}>
+                    <Button
+                      onClick={() => { if (!savingProfile) handleSaveProfile(); }}
+                      disabled={savingProfile || loadingProfile}
+                      aria-busy={savingProfile}
+                    >
                       <Save className="w-4 h-4 mr-2" />
                       {savingProfile ? 'Saving...' : 'Save Changes'}
                     </Button>
-                    <Button variant="outline" onClick={() => setIsEditing(false)} disabled={savingProfile}>
+                    <Button
+                      variant="outline"
+                      onClick={() => { if (!savingProfile) setIsEditing(false); }}
+                      disabled={savingProfile}
+                    >
                       <X className="w-4 h-4 mr-2" />
                       Cancel
                     </Button>
@@ -392,6 +429,17 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                 <CardTitle>Notification Preferences</CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
+                {/* Email delivery via SMTP */}
+                <div className="p-4 border rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">Email Delivery (SMTP)</p>
+                      <p className="text-sm text-muted-foreground">Configure SMTP to send invitations and updates.</p>
+                    </div>
+                    <Button variant="outline" onClick={() => setSmtpOpen(true)}>Configure</Button>
+                  </div>
+                </div>
+
                 {/* General Notifications */}
                 <div>
                   <h3 className="font-medium mb-4">General Notifications</h3>
@@ -652,15 +700,17 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
                       <p className="font-medium">Import Data</p>
                       <p className="text-sm text-muted-foreground">Import data from other expense tracking apps</p>
                     </div>
-                    <Button variant="outline" onClick={handleImportData}>
+                    <Button
+                      variant="outline"
+                      onClick={() => (Sonner as any)?.toast?.success?.("Data import feature coming soon!")}
+                    >
                       <Upload className="w-4 h-4 mr-2" />
                       Import
                     </Button>
                   </div>
                 </div>
-                
-                <Separator />
-                
+                  <Separator />
+
                 <div className="space-y-4">
                   <h3 className="font-medium text-destructive">Danger Zone</h3>
                   
@@ -698,6 +748,7 @@ export function SettingsPage({ onBack, onLogout, onLogoClick }: SettingsPageProp
           </TabsContent>
         </Tabs>
       </main>
+      <SmtpSettingsModal open={smtpOpen} onOpenChange={setSmtpOpen} />
     </div>
   );
 }

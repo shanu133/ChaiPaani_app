@@ -1,5 +1,11 @@
 import { useState, useEffect, lazy, Suspense } from "react";
-import { envDiagnostics } from "./lib/supabase";
+
+// No longer needed, vite.config.ts handles this
+// console.log('🔍 DEBUG: Checking environment variables on app load...');
+// console.log('VITE_ENABLE_SMTP:', import.meta.env.VITE_ENABLE_SMTP);
+// console.log('VITE_ENABLE_EXPENSE_EMAILS:', import.meta.env.VITE_ENABLE_EXPENSE_EMAILS);
+// console.log('VITE_PUBLIC_APP_URL:', import.meta.env.VITE_PUBLIC_APP_URL);
+// console.log('All env vars:', import.meta.env);
 const LandingPage = lazy(() => import("./components/landing-page").then(m => ({ default: m.LandingPage })));
 const AuthPage = lazy(() => import("./components/auth-page").then(m => ({ default: m.AuthPage })));
 const Dashboard = lazy(() => import("./components/dashboard").then(m => ({ default: m.Dashboard })));
@@ -16,6 +22,10 @@ type AppView = "landing" | "auth" | "dashboard" | "groups" | "group" | "notifica
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>("landing");
+  // Debug: log view changes
+  useEffect(() => {
+    console.log("[App] currentView:", currentView);
+  }, [currentView]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
@@ -25,16 +35,27 @@ export default function App() {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        // Capture invite token from URL on first load
+        // Capture invite token from URL on first load (query or hash)
         const url = new URL(window.location.href);
         const tokenFromUrl = url.searchParams.get("token");
-        if (tokenFromUrl) {
+        // Hash format: #token=abc
+        const hash = window.location.hash || "";
+        const tokenFromHash = (() => {
+          if (!hash) return null;
+          const match = /[#&]?token=([^&]+)/.exec(hash);
+          return match ? decodeURIComponent(match[1]) : null;
+        })();
+
+        const token = tokenFromUrl || tokenFromHash;
+        if (token) {
           // Persist token until we complete acceptance after login
-          sessionStorage.setItem("invite_token", tokenFromUrl);
-          setPendingInviteToken(tokenFromUrl);
+          sessionStorage.setItem("invite_token", token);
+          setPendingInviteToken(token);
           // Clean the URL so token isn't kept in history
           url.searchParams.delete("token");
-          window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+          const cleanHash = hash.replace(/[#&]?token=[^&]*/g, "").replace(/^#&/, "#");
+          const finalHash = cleanHash === "#" ? "" : cleanHash;
+          window.history.replaceState({}, "", url.pathname + url.search + finalHash);
         } else {
           const saved = sessionStorage.getItem("invite_token");
           if (saved) setPendingInviteToken(saved);
@@ -43,15 +64,17 @@ export default function App() {
         const user = await authService.getCurrentUser();
         if (user) {
           setIsAuthenticated(true);
-          setCurrentView("dashboard");
+          // Only set dashboard if not already in settings
+          setCurrentView(v => v === "settings" ? v : "dashboard");
         } else {
           setIsAuthenticated(false);
-          setCurrentView("landing");
+          // Don't force redirect if already in settings
+          setCurrentView(v => v === "settings" ? v : "landing");
         }
       } catch (error) {
         console.error("Auth check failed:", error);
         setIsAuthenticated(false);
-        setCurrentView("landing");
+        setCurrentView(v => v === "settings" ? v : "landing");
       } finally {
         setIsLoading(false);
       }
@@ -63,10 +86,10 @@ export default function App() {
     const { data: { subscription } } = authService.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setIsAuthenticated(true);
-        setCurrentView("dashboard");
+        setCurrentView(v => v === "settings" ? v : "dashboard");
       } else if (event === 'SIGNED_OUT') {
         setIsAuthenticated(false);
-        setCurrentView("landing");
+        setCurrentView(v => v === "settings" ? v : "landing");
       }
     });
 
@@ -88,8 +111,8 @@ export default function App() {
           (Sonner as any)?.toast?.success?.("Joined group successfully");
         }
       } catch (e) {
-  console.error("Error accepting invite token:", e);
-  (Sonner as any)?.toast?.error?.("Unable to accept invitation");
+        console.error("Error accepting invite token:", e);
+        (Sonner as any)?.toast?.error?.("Unable to accept invitation");
       } finally {
         sessionStorage.removeItem("invite_token");
         setPendingInviteToken(null);
@@ -162,14 +185,14 @@ export default function App() {
   }
 
   // Minimal diagnostics banner if env is missing (dev/preview only effect)
-  const showEnvBanner = envDiagnostics.missing.length > 0 && (import.meta as any).env?.DEV;
+  const showEnvBanner = false; // envDiagnostics.missing.length > 0 && (import.meta as any).env?.DEV;
 
   // Render the appropriate view
   return (
     <>
       {showEnvBanner && (
         <div className="w-full bg-yellow-100 text-yellow-900 text-sm px-4 py-2">
-          Missing env: {envDiagnostics.missing.join(', ')}. Backend features will be disabled until configured.
+          Missing env vars. Backend features will be disabled until configured.
         </div>
       )}
       {(() => {

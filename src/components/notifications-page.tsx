@@ -6,7 +6,7 @@ import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
-import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
+import ChaiPaaniLogoFull from "../assets/chaipaani_logo.png";
 import { notificationService, invitationService } from "../lib/supabase-service";
 import {
   ArrowLeft,

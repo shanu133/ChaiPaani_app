@@ -26,7 +26,10 @@ export const authService = {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || window.location.origin
+        redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || (() => {
+          if (typeof window !== 'undefined') return window.location.origin
+          throw new Error('VITE_SUPABASE_REDIRECT_URL must be configured')
+        })()
       }
     })
     return { data, error }
@@ -60,7 +63,6 @@ export const authService = {
 }
 
 export const groupService = {
-  createGroup: async (name: string, description: string, category: string = 'general') => {
     const user = await authService.getCurrentUser()
     if (!user) return { data: null, error: { message: 'User not authenticated' } }
 
@@ -441,9 +443,37 @@ export const expenseService = {
       .select()
 
     if (splitsError) {
-      // Clean up the orphaned expense
+      // Cleanup orphaned expense
       await supabase.from('expenses').delete().eq('id', expense.id)
       return { data: null, error: splitsError }
+    }
+
+    // Send email notifications asynchronously (don't wait or fail if it errors)
+    try {
+      const enableEmailNotifications = (import.meta as any).env?.VITE_ENABLE_EXPENSE_EMAILS !== 'false'
+      
+      if (enableEmailNotifications) {
+        // Call the notify-expense Edge function asynchronously
+        supabase.functions.invoke('notify-expense', {
+          body: {
+            expense_id: expense.id,
+            group_id: groupId,
+            payer_id: user.id,
+            description,
+            amount,
+            category
+          }
+        }).then(({ error: notifyError }) => {
+          if (notifyError) {
+            console.warn('Failed to send expense email notifications:', notifyError)
+          }
+        }).catch((err) => {
+          console.warn('Exception sending expense email notifications:', err)
+        })
+      }
+    } catch (err) {
+      // Ignore email notification errors - the expense was created successfully
+      console.warn('Failed to trigger expense email notifications:', err)
     }
 
     return { data: expense, error: null }
@@ -789,15 +819,123 @@ export const invitationService = {
 
       if (inviteError) return { data: null, error: inviteError }
 
-      // Optional: Try Edge Function for email delivery only if enabled
-      if ((import.meta as any).env?.VITE_ENABLE_INVITE_EMAIL === 'true') {
+      // Email delivery path
+      const enableSmtp = import.meta.env.VITE_ENABLE_SMTP === 'true'
+      const enableLegacyInvite = import.meta.env.VITE_ENABLE_INVITE_EMAIL === 'true'
+      
+      console.log('🔔 Email notification settings:', { enableSmtp, enableLegacyInvite })
+      
+      // Try SMTP first if enabled, else fall back to legacy edge invite function
+      if (enableSmtp) {
         try {
+          console.log('📧 Attempting to send invitation email via SMTP to:', email)
+          
+          // Fetch inviter's profile and group details for a personalized email
+          const user = await authService.getCurrentUser()
+          const { data: inviterProfile } = await supabase
+            .from('profiles')
+            .select('full_name, display_name, email')
+            .eq('id', user?.id)
+            .single()
+          
+          const { data: groupData } = await supabase
+            .from('groups')
+            .select('name')
+            .eq('id', groupId)
+            .single()
+
+          const inviterName = inviterProfile?.display_name || inviterProfile?.full_name || inviterProfile?.email?.split('@')[0] || 'Someone'
+          const groupName = groupData?.name || 'a group'
+
+          // Build email link base: prefer explicit VITE_EMAIL_LINK_BASE, else VITE_PUBLIC_APP_URL, else window origin
+          const emailLinkBase = (((import.meta as any).env?.VITE_EMAIL_LINK_BASE || (import.meta as any).env?.VITE_PUBLIC_APP_URL) as string | undefined)?.replace(/\/$/, '') || ''
+          const base = emailLinkBase || ((typeof window !== 'undefined' ? window.location.origin : '') || '').replace(/\/$/, '')
+          const inviteUrl = `${base}/#token=${encodeURIComponent(invitation.token)}`
+          const title = `You're invited to join ${groupName} on ChaiPaani`
+          const logoUrl = (import.meta as any).env?.VITE_PUBLIC_LOGO_URL || 'https://edwjkqbrvcoqsrfxqtyu.supabase.co/storage/v1/object/public/public-assets/email_banner.png'
+          const mottoPrimary = 'Splitting bills is easy as making chai'
+          const mottoSecondary = 'Split bills with friends, effortlessly'
+          const footerLine = 'Making bill splitting simple and fun.'
+          
+          const html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>${title}</title>
+            </head>
+            <body style="margin: 0; padding: 20px; background-color: #f8fafc; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+              <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                
+                <!-- Header with logo -->
+                <div style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); padding: 20px; text-align: center;">
+                  <img src="${logoUrl}" alt="ChaiPaani Logo" style="width: 60px; height: auto; margin-bottom: 12px; border-radius: 50%;">
+                  <h1 style="color: white; font-size: 28px; margin: 0; font-weight: 600;">ChaiPaani</h1>
+                  <div style="background: #1e293b; display: inline-block; border-radius: 6px; padding: 6px 18px; margin-top: 10px;">
+                    <span style="color: #bfdbfe; font-size: 15px; font-weight: 500; letter-spacing: 0.2px;">${mottoPrimary}</span>
+                  </div>
+                  <p style="color: #e0e7ff; font-size: 14px; margin: 8px 0 0 0; font-weight: 400;">${mottoSecondary}</p>
+                </div>
+                
+                <!-- Main content -->
+                <div style="padding: 40px 30px;">
+                  <h2 style="color: #1e293b; font-size: 24px; margin: 0 0 20px 0; font-weight: 600;">You're Invited! 🎉</h2>
+                  
+                  <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 16px 0;">Hello!</p>
+                  
+                  <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
+                    <strong style="color: #1e293b;">${inviterName}</strong> has invited you to join the group 
+                    "<strong style="color: #3b82f6;">${groupName}</strong>" on ChaiPaani.
+                  </p>
+                  
+                  <div style="text-align: center; margin: 32px 0;">
+                    <a href="${inviteUrl}" style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px rgba(59, 130, 246, 0.3);">
+                      Accept Invitation
+                    </a>
+                  </div>
+                  
+                  <div style="background-color: #f1f5f9; border-radius: 8px; padding: 20px; margin: 24px 0;">
+                    <p style="color: #64748b; font-size: 14px; margin: 0 0 8px 0; font-weight: 500;">Having trouble with the button? Copy and paste this link:</p>
+                    <p style="color: #3b82f6; font-size: 13px; margin: 0; word-break: break-all; font-family: monospace;">${inviteUrl}</p>
+                  </div>
+                  
+                  <p style="color: #64748b; font-size: 14px; line-height: 1.5; margin: 24px 0 0 0;">
+                    Join us and make splitting bills simple and fun! 💰
+                  </p>
+                </div>
+                
+                <!-- Footer -->
+                <div style="background-color: #f8fafc; padding: 20px 30px; border-top: 1px solid #e2e8f0; text-align: center;">
+                  <p style="color: #64748b; font-size: 12px; margin: 0 0 8px 0;">&copy; 2025 ChaiPaani. ${footerLine}</p>
+                  <p style="color: #94a3b8; font-size: 11px; margin: 0;">
+                    If you didn't expect this invitation, you can safely ignore this email.
+                  </p>
+                </div>
+                
+              </div>
+            </body>
+            </html>
+          `
+          
+          // NOTE: The Supabase client SDK does not provide server-side-only
+          // helpers like `inviteUserByEmail` in the browser. Instead we use our
+          // Edge function `smtp-send` to deliver invitation emails. The code
+          // below (invoking the `smtp-send` Edge function) will handle delivery.
+        } catch (emailError) {
+          console.error('❌ SMTP email delivery failed, invitation still created:', emailError)
+        }
+      } else if (enableLegacyInvite) {
+        try {
+          console.log('📧 Using legacy invite-user function for:', email)
           await supabase.functions.invoke('invite-user', {
             body: { groupId, email, token: invitation.token }
           })
         } catch (emailError) {
-          console.warn('Email delivery failed (or CORS), but invitation created:', emailError)
+          console.warn('Legacy email delivery failed (or CORS), but invitation created:', emailError)
         }
+      } else {
+        console.warn('⚠️ No email notification method enabled! Set VITE_ENABLE_SMTP=true or VITE_ENABLE_INVITE_EMAIL=true')
       }
 
       return { data: { ok: true, token: invitation.token }, error: null }
@@ -848,19 +986,15 @@ export const invitationService = {
     const user = await authService.getCurrentUser()
     if (!user) return { data: null, error: { message: 'User not authenticated' } }
 
-    // Fetch invitation by id to get token (RLS policy allows if invitee_email matches user's email)
+    // Fetch the invitation
     const { data: invitation, error: fetchError } = await supabase
       .from('invitations')
-      .select('id, token, invitee_email, status')
+      .select('token, status, invitee_email')
       .eq('id', inviteId)
       .single()
 
-    if (fetchError) {
-      return { data: null, error: fetchError }
-    }
-
-    if (!invitation) {
-      return { data: null, error: { message: 'Invitation not found' } }
+    if (fetchError || !invitation) {
+      return { data: null, error: fetchError || { message: 'Invitation not found' } }
     }
 
     // Verify the invitation is for the current user
@@ -874,6 +1008,132 @@ export const invitationService = {
 
     // Accept using the token
     return await invitationService.acceptByToken(invitation.token)
+  },
+  resendInvite: async (groupId: string, email: string) => {
+    try {
+      const user = await authService.getCurrentUser()
+      if (!user) return { data: null, error: { message: 'User not authenticated' } }
+
+      // Verify caller is group creator/admin
+      const { data: group, error: groupError } = await supabase
+        .from('groups')
+        .select('created_by, name') // Also fetch group name
+        .eq('id', groupId)
+        .single()
+      
+      if (groupError) return { data: null, error: groupError }
+      if (group.created_by !== user.id) return { data: null, error: { message: 'Only group creator can resend invitations' } }
+
+      // Look up pending invite for this email
+      const { data: invites, error } = await supabase
+        .from('invitations')
+        .select('token, status')
+        .eq('group_id', groupId)
+        .eq('invitee_email', email.toLowerCase())
+        .order('created_at', { ascending: false })
+        .limit(1)
+
+      if (error) return { data: null, error }
+      const invite = invites?.[0]
+      if (!invite || invite.status !== 'pending') {
+        return { data: null, error: { message: 'No pending invitation found for this email' } }
+      }
+
+      // --- Start: Use new professional email template ---
+      const { data: inviterProfile } = await supabase
+        .from('profiles')
+        .select('full_name, display_name, email')
+        .eq('id', user.id)
+        .single()
+
+      const inviterName = inviterProfile?.display_name || inviterProfile?.full_name || inviterProfile?.email?.split('@')[0] || 'Someone'
+      const groupName = group.name || 'a group'
+
+      // Build email link base for resend as well
+      const emailLinkBase2 = (((import.meta as any).env?.VITE_EMAIL_LINK_BASE || (import.meta as any).env?.VITE_PUBLIC_APP_URL) as string | undefined)?.replace(/\/$/, '') || ''
+      const base = emailLinkBase2 || ((typeof window !== 'undefined' ? window.location.origin : '') || '').replace(/\/$/, '')
+      const inviteUrl = `${base}/#token=${encodeURIComponent(invite.token)}`
+  const title = `Reminder: You're invited to join ${groupName} on ChaiPaani`
+  const logoUrl = (import.meta as any).env?.VITE_PUBLIC_LOGO_URL || 'https://edwjkqbrvcoqsrfxqtyu.supabase.co/storage/v1/object/public/public-assets/email_banner.png'
+  const mottoPrimary = 'Splitting bills is easy as making chai'
+  const mottoSecondary = 'Split bills with friends, effortlessly'
+  const footerLine = 'Making bill splitting simple and fun.'
+      
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${title}</title>
+        </head>
+        <body style="margin: 0; padding: 20px; background-color: #f8fafc; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+          <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+            
+            <!-- Header with logo -->
+            <div style="background: #0f172a; padding: 0; text-align: center;">
+              <img src="${logoUrl}" alt="ChaiPaani" style="width: 100%; max-width: 600px; height: auto; display: block; margin: 0 auto;">
+              <div style="padding: 16px 20px;">
+                <h1 style="color: white; font-size: 28px; margin: 0; font-weight: 600;">ChaiPaani</h1>
+                <div style="background: #1e293b; display: inline-block; border-radius: 6px; padding: 6px 18px; margin-top: 10px;">
+                  <span style="color: #bfdbfe; font-size: 15px; font-weight: 500; letter-spacing: 0.2px;">${mottoPrimary}</span>
+                </div>
+                <p style="color: #e0e7ff; font-size: 14px; margin: 8px 0 0 0; font-weight: 400;">${mottoSecondary}</p>
+              </div>
+            </div>
+            
+            <!-- Main content -->
+            <div style="padding: 40px 30px;">
+              <h2 style="color: #1e293b; font-size: 24px; margin: 0 0 20px 0; font-weight: 600;">Invitation Reminder 📬</h2>
+              
+              <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 16px 0;">Hello!</p>
+              
+              <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
+                This is a friendly reminder that <strong style="color: #1e293b;">${inviterName}</strong> invited you to join the group 
+                "<strong style="color: #3b82f6;">${groupName}</strong>" on ChaiPaani.
+              </p>
+              
+              <div style="text-align: center; margin: 32px 0;">
+                <a href="${inviteUrl}" style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px rgba(59, 130, 246, 0.3);">
+                  Accept Invitation
+                </a>
+              </div>
+              
+              <div style="background-color: #f1f5f9; border-radius: 8px; padding: 20px; margin: 24px 0;">
+                <p style="color: #64748b; font-size: 14px; margin: 0 0 8px 0; font-weight: 500;">Having trouble with the button? Copy and paste this link:</p>
+                <p style="color: #3b82f6; font-size: 13px; margin: 0; word-break: break-all; font-family: monospace;">${inviteUrl}</p>
+              </div>
+            </div>
+            
+            <!-- Footer -->
+            <div style="background-color: #f8fafc; padding: 20px 30px; border-top: 1px solid #e2e8f0; text-align: center;">
+              <p style="color: #64748b; font-size: 12px; margin: 0 0 8px 0;">&copy; 2025 ChaiPaani. ${footerLine}</p>
+              <p style="color: #94a3b8; font-size: 11px; margin: 0;">
+                If you didn't expect this invitation, you can safely ignore this email.
+              </p>
+            </div>
+            
+          </div>
+        </body>
+        </html>
+      `
+      // --- End: Use new professional email template ---
+
+  const text = `ChaiPaani\n${mottoPrimary}\n${mottoSecondary}\n\nReminder: ${inviterName} invited you to join "${groupName}" on ChaiPaani.\nAccept: ${inviteUrl}\n\n${footerLine}`
+      const forceTextOnly = (import.meta as any).env?.VITE_FORCE_PLAINTEXT_EMAILS === 'true'
+      const forceHtmlOnly = (import.meta as any).env?.VITE_FORCE_HTML_ONLY_EMAILS === 'true'
+      const htmlToSend = forceTextOnly ? undefined : html
+      const textToSend = forceHtmlOnly ? undefined : text
+      const { data, error: sendErr } = await supabase.functions.invoke('smtp-send', {
+        body: { to: email.toLowerCase(), subject: title, html: htmlToSend, text: textToSend, inlineLogoUrl: logoUrl, groupName, inviterName }
+      })
+      console.log('Edge Function invoke result:', { data, sendErr })
+      if (sendErr) return { data: null, error: sendErr }
+      if (!data?.ok) return { data: null, error: { message: data?.error || 'Failed to send email' } as any }
+      return { data: { ok: true }, error: null }
+    } catch (error) {
+      return { data: null, error }
+    }
   }
 }
 
@@ -884,8 +1144,25 @@ export const profileService = {
     if (!user) return { data: null, error: { message: 'User not authenticated' } }
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, display_name, full_name, email, avatar_url')
+      .select('id, display_name, full_name, email, avatar_url, phone')
       .eq('id', user.id)
+      .single()
+    return { data, error }
+  },
+  updateProfile: async (updates: { display_name?: string; phone?: string }) => {
+    const user = await authService.getCurrentUser()
+    if (!user) return { data: null, error: { message: 'User not authenticated' } }
+    
+    // Build update object with only provided fields
+    const updateData: any = {}
+    if (updates.display_name !== undefined) updateData.display_name = updates.display_name
+    if (updates.phone !== undefined) updateData.phone = updates.phone
+    
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(updateData)
+      .eq('id', user.id)
+      .select('id, display_name, phone')
       .single()
     return { data, error }
   },

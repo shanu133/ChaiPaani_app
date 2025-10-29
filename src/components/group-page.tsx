@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import ChaiPaaniLogo from "../assets/ed44a61a321c772f05e626fe7aae98312671f4e9.png";
-import ChaiPaaniLogoFull from "../assets/eae4acbb88aec2ceea0a68082bc9da850f60105a.png";
+import ChaiPaaniLogoFull from "../assets/chaipaani_logo.png";
 import { AddExpenseModal } from "./add-expense-modal";
 import { CreateGroupModal } from "./create-group-modal";
 import { SettleUpModal } from "./settle-up-modal";
@@ -102,6 +102,15 @@ export function GroupPage({ groupId, onBack, onLogout, onLogoClick }: GroupPageP
 
   const isValidMemberStatus = (status: any): status is 'active' | 'pending' | 'inactive' =>
     status === 'active' || status === 'pending' || status === 'inactive';
+
+  // Reload group data when window gains focus (e.g., when user returns from email)
+  useEffect(() => {
+    const handleFocus = () => {
+      fetchGroupDetails();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [groupId]);
 
   const fetchGroupDetails = async () => {
     setLoading(true);
